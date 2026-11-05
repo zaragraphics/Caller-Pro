@@ -2,7 +2,9 @@
 package com.callerpro.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -35,6 +37,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -58,16 +62,13 @@ data class CallEntry(
 )
 
 class MainActivity : ComponentActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Create Caller Pro's private recording folder.
         RecordingStorage.getRecordingsFolder(this)
 
         window.statusBarColor =
             android.graphics.Color.rgb(0, 17, 61)
-
         window.navigationBarColor =
             android.graphics.Color.BLACK
 
@@ -80,46 +81,26 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CallerProScreen() {
-
     val context = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
-    var calls by remember {
-        mutableStateOf(listOf<CallEntry>())
-    }
+    var calls by remember { mutableStateOf(listOf<CallEntry>()) }
+    var callMessage by remember { mutableStateOf("Checking permission...") }
+    var hasMore by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(false) }
+    var selectedFilter by remember { mutableStateOf("All") }
+    var searchText by remember { mutableStateOf("") }
+    var searchOpen by remember { mutableStateOf(false) }
+    var selectedMenu by remember { mutableStateOf("All Calls") }
+    var infoDialog by remember { mutableStateOf<String?>(null) }
 
-    var callMessage by remember {
-        mutableStateOf("Checking permission...")
-    }
-
-    var hasMore by remember {
-        mutableStateOf(false)
-    }
-
-    var isLoading by remember {
-        mutableStateOf(false)
-    }
-
-    var selectedFilter by remember {
-        mutableStateOf("All")
-    }
-
-    var searchText by remember {
-        mutableStateOf("")
-    }
-
-    var searchOpen by remember {
-        mutableStateOf(false)
-    }
-
-    var selectedMenu by remember {
-        mutableStateOf("All Calls")
-    }
-
-    var infoDialog by remember {
-        mutableStateOf<String?>(null)
-    }
+    var showLibrary by remember { mutableStateOf(false) }
+    var audioFiles by remember { mutableStateOf(listOf<File>()) }
+    var playingPath by remember { mutableStateOf<String?>(null) }
+    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+    var deleteTarget by remember { mutableStateOf<File?>(null) }
+    var saveTarget by remember { mutableStateOf<File?>(null) }
 
     var permissionGranted by remember {
         mutableStateOf(
@@ -129,8 +110,99 @@ fun CallerProScreen() {
         )
     }
 
-    fun loadCallHistory(loadMore: Boolean = false) {
+    fun refreshAudioFiles() {
+        audioFiles = RecordingStorage.scanAudioFiles(context)
+    }
 
+    fun stopPlayback() {
+        try {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+        } catch (_: Exception) {
+        }
+        mediaPlayer = null
+        playingPath = null
+    }
+
+    fun playAudio(file: File) {
+        if (playingPath == file.absolutePath) {
+            stopPlayback()
+            return
+        }
+
+        stopPlayback()
+
+        try {
+            val player = MediaPlayer()
+            player.setDataSource(file.absolutePath)
+            player.setOnCompletionListener {
+                it.release()
+                mediaPlayer = null
+                playingPath = null
+            }
+            player.prepare()
+            player.start()
+
+            mediaPlayer = player
+            playingPath = file.absolutePath
+        } catch (_: Exception) {
+            stopPlayback()
+            infoDialog = "Unable to play this audio file."
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                mediaPlayer?.release()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    val saveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("audio/*")
+    ) { destination ->
+        val source = saveTarget
+        saveTarget = null
+
+        if (destination != null && source != null) {
+            try {
+                context.contentResolver.openOutputStream(destination)?.use { output ->
+                    source.inputStream().use { input ->
+                        input.copyTo(output)
+                    }
+                }
+                infoDialog = "Audio saved successfully."
+            } catch (_: Exception) {
+                infoDialog = "Unable to save this audio file."
+            }
+        }
+    }
+
+    fun shareAudio(file: File) {
+        try {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "audio/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            context.startActivity(
+                Intent.createChooser(intent, "Share recording")
+            )
+        } catch (_: Exception) {
+            infoDialog = "Unable to share this audio file."
+        }
+    }
+
+    fun loadCallHistory(loadMore: Boolean = false) {
         if (!permissionGranted || isLoading) return
 
         if (!loadMore) {
@@ -144,9 +216,7 @@ fun CallerProScreen() {
         callMessage = "Loading calls..."
 
         Thread {
-
             try {
-
                 val result = mutableListOf<CallEntry>()
                 var moreAvailable = false
 
@@ -167,38 +237,24 @@ fun CallerProScreen() {
                 ) ?: throw Exception("Call history unavailable")
 
                 cursor.use {
-
-                    val nameIndex =
-                        it.getColumnIndex(CallLog.Calls.CACHED_NAME)
-
-                    val numberIndex =
-                        it.getColumnIndex(CallLog.Calls.NUMBER)
-
-                    val typeIndex =
-                        it.getColumnIndex(CallLog.Calls.TYPE)
-
-                    val dateIndex =
-                        it.getColumnIndex(CallLog.Calls.DATE)
-
-                    val durationIndex =
-                        it.getColumnIndex(CallLog.Calls.DURATION)
+                    val nameIndex = it.getColumnIndex(CallLog.Calls.CACHED_NAME)
+                    val numberIndex = it.getColumnIndex(CallLog.Calls.NUMBER)
+                    val typeIndex = it.getColumnIndex(CallLog.Calls.TYPE)
+                    val dateIndex = it.getColumnIndex(CallLog.Calls.DATE)
+                    val durationIndex = it.getColumnIndex(CallLog.Calls.DURATION)
 
                     if (
-                        nameIndex < 0 ||
-                        numberIndex < 0 ||
-                        typeIndex < 0 ||
-                        dateIndex < 0 ||
+                        nameIndex < 0 || numberIndex < 0 ||
+                        typeIndex < 0 || dateIndex < 0 ||
                         durationIndex < 0
                     ) {
                         throw Exception("Call-log data unavailable")
                     }
 
                     if (it.moveToPosition(offset)) {
-
                         var count = 0
 
                         do {
-
                             if (count >= 25) {
                                 moreAvailable = true
                                 break
@@ -207,122 +263,79 @@ fun CallerProScreen() {
                             val savedName = it.getString(nameIndex)
                             val number = it.getString(numberIndex)
 
-                            val type = when (
-                                it.getInt(typeIndex)
-                            ) {
-
-                                CallLog.Calls.INCOMING_TYPE ->
-                                    "Incoming"
-
-                                CallLog.Calls.OUTGOING_TYPE ->
-                                    "Outgoing"
-
-                                CallLog.Calls.MISSED_TYPE ->
-                                    "Missed"
-
-                                CallLog.Calls.REJECTED_TYPE ->
-                                    "Rejected"
-
+                            val type = when (it.getInt(typeIndex)) {
+                                CallLog.Calls.INCOMING_TYPE -> "Incoming"
+                                CallLog.Calls.OUTGOING_TYPE -> "Outgoing"
+                                CallLog.Calls.MISSED_TYPE -> "Missed"
+                                CallLog.Calls.REJECTED_TYPE -> "Rejected"
                                 else -> "Other"
                             }
 
                             val dateValue = it.getLong(dateIndex)
+                            val durationValue = it.getLong(durationIndex)
 
-                            val durationValue =
-                                it.getLong(durationIndex)
-
-                            val formattedDate =
-                                SimpleDateFormat(
-                                    "dd MMM yyyy, hh:mm a",
-                                    Locale.getDefault()
-                                ).format(Date(dateValue))
+                            val formattedDate = SimpleDateFormat(
+                                "dd MMM yyyy, hh:mm a",
+                                Locale.getDefault()
+                            ).format(Date(dateValue))
 
                             result.add(
                                 CallEntry(
                                     name = savedName?.takeIf {
                                         it.isNotBlank()
                                     } ?: "Unknown caller",
-
                                     number = number ?: "Unknown number",
-
                                     type = type,
-
                                     date = formattedDate,
-
-                                    duration =
-                                        "${durationValue / 60} min " +
-                                        "${durationValue % 60} sec"
+                                    duration = "${durationValue / 60} min ${durationValue % 60} sec"
                                 )
                             )
 
                             count++
-
                         } while (it.moveToNext())
                     }
                 }
 
                 Handler(Looper.getMainLooper()).post {
-
-                    calls = if (loadMore) {
-                        calls + result
-                    } else {
-                        result
-                    }
-
+                    calls = if (loadMore) calls + result else result
                     hasMore = moreAvailable
                     isLoading = false
-
                     callMessage = if (calls.isEmpty()) {
                         "No call history found"
                     } else {
                         "Showing ${calls.size} calls"
                     }
                 }
-
-            } catch (e: Exception) {
-
+            } catch (_: Exception) {
                 Handler(Looper.getMainLooper()).post {
                     isLoading = false
-                    callMessage =
-                        "Unable to load calls. Please try again."
+                    callMessage = "Unable to load calls. Please try again."
                 }
             }
-
         }.start()
     }
 
-    val permissionLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestPermission()
-        ) { granted ->
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        permissionGranted = granted
 
-            permissionGranted = granted
-
-            if (granted) {
-                loadCallHistory()
-            } else {
-                callMessage =
-                    "Permission denied. Allow Call Logs access in App Settings."
-            }
+        if (granted) {
+            loadCallHistory()
+        } else {
+            callMessage = "Permission denied. Allow Call Logs access in App Settings."
         }
+    }
 
     LaunchedEffect(Unit) {
-
         if (permissionGranted) {
             loadCallHistory()
         } else {
-            permissionLauncher.launch(
-                Manifest.permission.READ_CALL_LOG
-            )
+            permissionLauncher.launch(Manifest.permission.READ_CALL_LOG)
         }
     }
 
-    DisposableEffect(Unit) {
-        onDispose { }
-    }
-
     val filteredCalls = calls.filter { call ->
-
         val matchesFilter = when (selectedFilter) {
             "Incoming" -> call.type == "Incoming"
             "Outgoing" -> call.type == "Outgoing"
@@ -339,57 +352,42 @@ fun CallerProScreen() {
     }
 
     ModalNavigationDrawer(
-
         drawerState = drawerState,
-
         drawerContent = {
-
             ModalDrawerSheet(
                 modifier = Modifier
                     .fillMaxWidth(0.86f)
                     .fillMaxHeight(),
-
                 drawerContainerColor = Color.White,
-
                 drawerShape = RoundedCornerShape(
                     topEnd = 26.dp,
                     bottomEnd = 26.dp
                 )
             ) {
-
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
                             Brush.linearGradient(
-                                listOf(
-                                    DeepBlue,
-                                    Blue,
-                                    Cyan
-                                )
+                                listOf(DeepBlue, Blue, Cyan)
                             )
                         )
                         .padding(24.dp)
                 ) {
-
                     Column {
-
                         Icon(
                             Icons.Default.Call,
-                            contentDescription = null,
+                            null,
                             tint = Color.White,
                             modifier = Modifier.size(42.dp)
                         )
-
                         Spacer(Modifier.height(12.dp))
-
                         Text(
                             "CALLER PRO",
                             color = Color.White,
                             fontSize = 25.sp,
                             fontWeight = FontWeight.Bold
                         )
-
                         Text(
                             "Your personal call library",
                             color = Color.White.copy(alpha = 0.85f),
@@ -415,28 +413,18 @@ fun CallerProScreen() {
                 )
 
                 menuItems.forEach { item ->
-
                     NavigationDrawerItem(
-
                         icon = {
-                            Icon(
-                                item.second,
-                                null,
-                                tint = Blue
-                            )
+                            Icon(item.second, null, tint = Blue)
                         },
-
                         label = {
                             Text(
                                 item.first,
                                 fontWeight = FontWeight.SemiBold
                             )
                         },
-
                         selected = selectedMenu == item.first,
-
                         onClick = {
-
                             selectedMenu = item.first
 
                             scope.launch {
@@ -444,96 +432,57 @@ fun CallerProScreen() {
                             }
 
                             when (item.third) {
-
                                 "calls" -> {
-
-                                    selectedFilter =
-                                        when (item.first) {
-                                            "Incoming Calls" -> "Incoming"
-                                            "Outgoing Calls" -> "Outgoing"
-                                            "Missed Calls" -> "Missed"
-                                            else -> "All"
-                                        }
+                                    selectedFilter = when (item.first) {
+                                        "Incoming Calls" -> "Incoming"
+                                        "Outgoing Calls" -> "Outgoing"
+                                        "Missed Calls" -> "Missed"
+                                        else -> "All"
+                                    }
                                 }
 
                                 "recordings" -> {
-    val audioFiles =
-        RecordingStorage.scanAudioFiles(context)
-
-    infoDialog = if (audioFiles.isEmpty()) {
-        "Recording Library\n\nNo audio recordings found in Caller Pro storage yet.\n\nFolder:\nAndroid/data/com.callerpro.app/files/Music/Caller Pro/Recordings"
-    } else {
-        "Recording Library\n\nFound ${audioFiles.size} audio file(s):\n\n" +
-            audioFiles.joinToString("\n\n") { file ->
-                val sizeMB = file.length() / (1024.0 * 1024.0)
-                "${file.name}\n${"%.2f".format(sizeMB)} MB"
-            }
-    }
-}
-
-                                else -> {
-                                    infoDialog = item.first
+                                    refreshAudioFiles()
+                                    showLibrary = true
                                 }
+
+                                else -> infoDialog = item.first
                             }
                         },
-
                         modifier = Modifier.padding(
                             horizontal = 12.dp,
                             vertical = 2.dp
                         ),
-
-                        colors =
-                            NavigationDrawerItemDefaults.colors(
-                                selectedContainerColor = PaleBlue,
-                                selectedTextColor = Blue
-                            )
+                        colors = NavigationDrawerItemDefaults.colors(
+                            selectedContainerColor = PaleBlue,
+                            selectedTextColor = Blue
+                        )
                     )
                 }
             }
         }
-
     ) {
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        listOf(
-                            DeepBlue,
-                            Color(0xFF062B70),
-                            DeepBlue
-                        )
+                        listOf(DeepBlue, Color(0xFF062B70), DeepBlue)
                     )
                 )
         ) {
-
-            // TOP HEADER
-
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(
-                        horizontal = 12.dp,
-                        vertical = 10.dp
-                    ),
-
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-
                 IconButton(
                     onClick = {
-                        scope.launch {
-                            drawerState.open()
-                        }
+                        scope.launch { drawerState.open() }
                     }
                 ) {
-
-                    Icon(
-                        Icons.Default.Menu,
-                        "Menu",
-                        tint = Color.White
-                    )
+                    Icon(Icons.Default.Menu, "Menu", tint = Color.White)
                 }
 
                 Icon(
@@ -542,26 +491,19 @@ fun CallerProScreen() {
                     tint = Color.White,
                     modifier = Modifier
                         .size(34.dp)
-                        .background(
-                            Blue,
-                            RoundedCornerShape(10.dp)
-                        )
+                        .background(Blue, RoundedCornerShape(10.dp))
                         .padding(6.dp)
                 )
 
                 Spacer(Modifier.width(10.dp))
 
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
-
+                Column(Modifier.weight(1f)) {
                     Text(
                         "Caller Pro",
                         color = Color.White,
                         fontSize = 21.sp,
                         fontWeight = FontWeight.Bold
                     )
-
                     Text(
                         "Your personal call library",
                         color = Color.White.copy(alpha = 0.8f),
@@ -569,40 +511,20 @@ fun CallerProScreen() {
                     )
                 }
 
-                IconButton(
-                    onClick = {
-                        searchOpen = !searchOpen
-                    }
-                ) {
-
-                    Icon(
-                        Icons.Default.Search,
-                        "Search",
-                        tint = Color.White
-                    )
+                IconButton(onClick = { searchOpen = !searchOpen }) {
+                    Icon(Icons.Default.Search, "Search", tint = Color.White)
                 }
 
                 Surface(
-                    color = if (permissionGranted) {
-                        Color(0xFF0C8F67)
-                    } else {
-                        Color(0xFF667085)
-                    },
-
+                    color = if (permissionGranted) Color(0xFF0C8F67)
+                    else Color(0xFF667085),
                     shape = RoundedCornerShape(20.dp)
                 ) {
-
                     Text(
-                        if (permissionGranted) {
-                            "ACCESS ON"
-                        } else {
-                            "ACCESS OFF"
-                        },
-
+                        if (permissionGranted) "ACCESS ON" else "ACCESS OFF",
                         color = Color.White,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
-
                         modifier = Modifier.padding(
                             horizontal = 9.dp,
                             vertical = 7.dp
@@ -611,43 +533,25 @@ fun CallerProScreen() {
                 }
             }
 
-            // SEARCH BAR
-
             if (searchOpen) {
-
                 OutlinedTextField(
                     value = searchText,
-
-                    onValueChange = {
-                        searchText = it
-                    },
-
+                    onValueChange = { searchText = it },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp),
-
-                    placeholder = {
-                        Text("Search name or number")
-                    },
-
+                    placeholder = { Text("Search name or number") },
                     singleLine = true,
-
                     trailingIcon = {
-
                         IconButton(
                             onClick = {
                                 searchText = ""
                                 searchOpen = false
                             }
                         ) {
-
-                            Icon(
-                                Icons.Default.Close,
-                                "Close"
-                            )
+                            Icon(Icons.Default.Close, "Close")
                         }
                     },
-
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = Color.White,
                         unfocusedContainerColor = Color.White,
@@ -657,92 +561,57 @@ fun CallerProScreen() {
                 )
             }
 
-            // SUMMARY CARDS
-
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(
-                        horizontal = 12.dp,
-                        vertical = 10.dp
-                    ),
-
-                horizontalArrangement =
-                    Arrangement.spacedBy(7.dp)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
             ) {
-
                 StatCard(
-                    "All",
-                    calls.size.toString(),
-                    Icons.Default.Call,
-                    Blue,
-                    Modifier.weight(1f)
+                    "All", calls.size.toString(),
+                    Icons.Default.Call, Blue, Modifier.weight(1f)
                 )
-
                 StatCard(
                     "Incoming",
-                    calls.count {
-                        it.type == "Incoming"
-                    }.toString(),
+                    calls.count { it.type == "Incoming" }.toString(),
                     Icons.Default.CallReceived,
                     Color(0xFF19A86B),
                     Modifier.weight(1f)
                 )
-
                 StatCard(
                     "Outgoing",
-                    calls.count {
-                        it.type == "Outgoing"
-                    }.toString(),
+                    calls.count { it.type == "Outgoing" }.toString(),
                     Icons.Default.CallMade,
                     Color(0xFF00A6D6),
                     Modifier.weight(1f)
                 )
-
                 StatCard(
                     "Missed",
-                    calls.count {
-                        it.type == "Missed"
-                    }.toString(),
+                    calls.count { it.type == "Missed" }.toString(),
                     Icons.Default.CallMissed,
                     Color(0xFFE5485D),
                     Modifier.weight(1f)
                 )
             }
 
-            // WHITE CALL HISTORY AREA
-
             Card(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(top = 4.dp),
-
                 shape = RoundedCornerShape(
                     topStart = 25.dp,
                     topEnd = 25.dp
                 ),
-
                 colors = CardDefaults.cardColors(
                     containerColor = Color.White
                 )
             ) {
-
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(
-                            horizontal = 14.dp,
-                            vertical = 12.dp
-                        )
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
                 ) {
-
-                    // TITLE AND REFRESH
-
-                    Row(
-                        verticalAlignment =
-                            Alignment.CenterVertically
-                    ) {
-
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "Call History",
                             color = Ink,
@@ -750,7 +619,6 @@ fun CallerProScreen() {
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f)
                         )
-
                         Text(
                             callMessage,
                             color = Muted,
@@ -758,7 +626,6 @@ fun CallerProScreen() {
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-
                         IconButton(
                             onClick = {
                                 if (permissionGranted) {
@@ -769,153 +636,84 @@ fun CallerProScreen() {
                                     )
                                 }
                             },
-
                             enabled = !isLoading
                         ) {
-
-                            Icon(
-                                Icons.Default.Refresh,
-                                "Refresh",
-                                tint = Blue
-                            )
+                            Icon(Icons.Default.Refresh, "Refresh", tint = Blue)
                         }
                     }
-
-                    // FILTER BUTTONS
 
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(
-                                rememberScrollState()
-                            ),
-
-                        horizontalArrangement =
-                            Arrangement.spacedBy(7.dp)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
-
-                        listOf(
-                            "All",
-                            "Incoming",
-                            "Outgoing",
-                            "Missed"
-                        ).forEach { filter ->
-
+                        listOf("All", "Incoming", "Outgoing", "Missed").forEach {
+                            filter ->
                             FilterChip(
-
-                                selected =
-                                    selectedFilter == filter,
-
-                                onClick = {
-                                    selectedFilter = filter
-                                },
-
-                                label = {
-                                    Text(filter)
-                                },
-
-                                colors =
-                                    FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Blue,
-                                        selectedLabelColor = Color.White
-                                    )
+                                selected = selectedFilter == filter,
+                                onClick = { selectedFilter = filter },
+                                label = { Text(filter) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Blue,
+                                    selectedLabelColor = Color.White
+                                )
                             )
                         }
                     }
 
                     Spacer(Modifier.height(8.dp))
 
-                    if (
-                        filteredCalls.isEmpty() &&
-                        !isLoading
-                    ) {
-
+                    if (filteredCalls.isEmpty() && !isLoading) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f),
-
-                            contentAlignment =
-                                Alignment.Center
+                            contentAlignment = Alignment.Center
                         ) {
-
                             Text(
                                 if (!permissionGranted) {
                                     "Please grant Call History permission"
                                 } else {
                                     "No calls found"
                                 },
-
                                 color = Muted
                             )
                         }
-
                     } else {
-
                         LazyColumn(
                             modifier = Modifier.weight(1f),
-
-                            contentPadding = PaddingValues(
-                                bottom = 10.dp
-                            )
+                            contentPadding = PaddingValues(bottom = 10.dp)
                         ) {
-
                             items(filteredCalls) { call ->
-
                                 CallRow(call) {
-
                                     infoDialog =
-                                        "${call.name}\n" +
-                                        "${call.number}\n" +
-                                        "${call.type} • ${call.duration}\n" +
-                                        call.date
+                                        "${call.name}\n${call.number}\n" +
+                                        "${call.type} • ${call.duration}\n${call.date}"
                                 }
                             }
 
-                            // LOAD MORE 25 CALLS
-
                             if (hasMore || isLoading) {
-
                                 item {
-
                                     Button(
                                         onClick = {
-                                            loadCallHistory(
-                                                loadMore = true
-                                            )
+                                            loadCallHistory(loadMore = true)
                                         },
-
-                                        enabled =
-                                            hasMore && !isLoading,
-
+                                        enabled = hasMore && !isLoading,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(vertical = 12.dp),
-
-                                        shape =
-                                            RoundedCornerShape(28.dp),
-
-                                        colors =
-                                            ButtonDefaults.buttonColors(
-                                                containerColor = Blue
-                                            )
+                                        shape = RoundedCornerShape(28.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Blue
+                                        )
                                     ) {
-
                                         Text(
-                                            if (isLoading) {
-                                                "Loading..."
-                                            } else {
-                                                "Load More (25)"
-                                            },
-
-                                            fontWeight =
-                                                FontWeight.Bold
+                                            if (isLoading) "Loading..."
+                                            else "Load More (25)",
+                                            fontWeight = FontWeight.Bold
                                         )
-
-                                        Icon(
-                                            Icons.Default.ExpandMore,
-                                            null
-                                        )
+                                        Icon(Icons.Default.ExpandMore, null)
                                     }
                                 }
                             }
@@ -926,37 +724,272 @@ fun CallerProScreen() {
         }
     }
 
-    // CALL DETAILS DIALOG
-
-    if (infoDialog != null) {
-
-        AlertDialog(
-
+    // RECORDING LIBRARY
+    if (showLibrary) {
+        Dialog(
             onDismissRequest = {
-                infoDialog = null
-            },
+                stopPlayback()
+                showLibrary = false
+            }
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.82f),
+                shape = RoundedCornerShape(22.dp),
+                color = Color.White
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Recording Library",
+                                color = Ink,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "${audioFiles.size} audio file(s) found",
+                                color = Muted,
+                                fontSize = 12.sp
+                            )
+                        }
 
-            title = {
-                Text(
-                    infoDialog!!.substringBefore("\n")
-                )
-            },
+                        IconButton(onClick = { refreshAudioFiles() }) {
+                            Icon(Icons.Default.Refresh, "Refresh", tint = Blue)
+                        }
 
+                        IconButton(
+                            onClick = {
+                                stopPlayback()
+                                showLibrary = false
+                            }
+                        ) {
+                            Icon(Icons.Default.Close, "Close")
+                        }
+                    }
+
+                    HorizontalDivider(color = Line)
+                    Spacer(Modifier.height(8.dp))
+
+                    if (audioFiles.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    Icons.Default.MusicNote,
+                                    null,
+                                    tint = Blue,
+                                    modifier = Modifier.size(44.dp)
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "No recordings found",
+                                    color = Ink,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "Audio files placed in Caller Pro's recording folder will appear here.",
+                                    color = Muted,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(audioFiles, key = { it.absolutePath }) { file ->
+                                RecordingRow(
+                                    file = file,
+                                    isPlaying = playingPath == file.absolutePath,
+                                    onPlay = { playAudio(file) },
+                                    onShare = { shareAudio(file) },
+                                    onSave = {
+                                        saveTarget = file
+                                        saveLauncher.launch(file.name)
+                                    },
+                                    onDelete = {
+                                        deleteTarget = file
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        "Caller Pro currently scans its own recording folder only.",
+                        color = Muted,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+        }
+    }
+
+    // DELETE CONFIRMATION
+    if (deleteTarget != null) {
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete recording?") },
             text = {
-                Text(infoDialog!!)
+                Text("This will permanently delete ${deleteTarget?.name}.")
             },
-
             confirmButton = {
-
                 TextButton(
                     onClick = {
-                        infoDialog = null
+                        val file = deleteTarget
+                        deleteTarget = null
+
+                        if (file != null) {
+                            if (playingPath == file.absolutePath) {
+                                stopPlayback()
+                            }
+
+                            if (file.delete()) {
+                                refreshAudioFiles()
+                                infoDialog = "Recording deleted."
+                            } else {
+                                infoDialog = "Unable to delete this file."
+                            }
+                        }
                     }
                 ) {
+                    Text("Delete", color = Color(0xFFD92D20))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (infoDialog != null) {
+        AlertDialog(
+            onDismissRequest = { infoDialog = null },
+            title = { Text(infoDialog!!.substringBefore("\n")) },
+            text = { Text(infoDialog!!) },
+            confirmButton = {
+                TextButton(onClick = { infoDialog = null }) {
                     Text("OK")
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun RecordingRow(
+    file: File,
+    isPlaying: Boolean,
+    onPlay: () -> Unit,
+    onShare: () -> Unit,
+    onSave: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    val sizeMB = file.length() / (1024.0 * 1024.0)
+    val modified = SimpleDateFormat(
+        "dd MMM yyyy, hh:mm a",
+        Locale.getDefault()
+    ).format(Date(file.lastModified()))
+
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = PaleBlue
+        ),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.AudioFile,
+                null,
+                tint = Blue,
+                modifier = Modifier.size(34.dp)
+            )
+
+            Spacer(Modifier.width(9.dp))
+
+            Column(Modifier.weight(1f)) {
+                Text(
+                    file.name,
+                    color = Ink,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "${"%.2f".format(sizeMB)} MB • $modified",
+                    color = Muted,
+                    fontSize = 10.sp
+                )
+            }
+
+            IconButton(onClick = onPlay) {
+                Icon(
+                    if (isPlaying) Icons.Default.Pause
+                    else Icons.Default.PlayArrow,
+                    if (isPlaying) "Pause" else "Play",
+                    tint = Blue
+                )
+            }
+
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Default.MoreVert, "More options", tint = Muted)
+                }
+
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Share Audio") },
+                        leadingIcon = { Icon(Icons.Default.Share, null) },
+                        onClick = {
+                            menuExpanded = false
+                            onShare()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Save Audio") },
+                        leadingIcon = { Icon(Icons.Default.SaveAlt, null) },
+                        onClick = {
+                            menuExpanded = false
+                            onSave()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete Recording") },
+                        leadingIcon = {
+                            Icon(Icons.Default.Delete, null, tint = Color.Red)
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onDelete()
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -968,53 +1001,27 @@ private fun StatCard(
     accent: Color,
     modifier: Modifier = Modifier
 ) {
-
     Card(
         modifier = modifier.height(88.dp),
-
         shape = RoundedCornerShape(15.dp),
-
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White
-        ),
-
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = 3.dp
-        )
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
     ) {
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(6.dp),
-
-            horizontalAlignment =
-                Alignment.CenterHorizontally,
-
-            verticalArrangement =
-                Arrangement.Center
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-
-            Icon(
-                icon,
-                null,
-                tint = accent,
-                modifier = Modifier.size(20.dp)
-            )
-
+            Icon(icon, null, tint = accent, modifier = Modifier.size(20.dp))
             Text(
                 count,
                 color = Ink,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
-
-            Text(
-                title,
-                color = Muted,
-                fontSize = 9.sp,
-                maxLines = 1
-            )
+            Text(title, color = Muted, fontSize = 9.sp, maxLines = 1)
         }
     }
 }
@@ -1024,7 +1031,6 @@ private fun CallRow(
     call: CallEntry,
     onClick: () -> Unit
 ) {
-
     val accent = when (call.type) {
         "Incoming" -> Color(0xFF16A36A)
         "Outgoing" -> Blue
@@ -1044,23 +1050,15 @@ private fun CallRow(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(vertical = 10.dp),
-
-        verticalAlignment =
-            Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically
     ) {
-
-        // CALLER INITIAL
-
         Box(
             modifier = Modifier
                 .size(43.dp)
                 .clip(CircleShape)
                 .background(PaleBlue),
-
-            contentAlignment =
-                Alignment.Center
+            contentAlignment = Alignment.Center
         ) {
-
             Text(
                 call.name.firstOrNull()?.uppercase() ?: "?",
                 color = Blue,
@@ -1071,12 +1069,7 @@ private fun CallRow(
 
         Spacer(Modifier.width(10.dp))
 
-        // CALL INFORMATION
-
-        Column(
-            modifier = Modifier.weight(1f)
-        ) {
-
+        Column(Modifier.weight(1f)) {
             Text(
                 call.name,
                 color = Ink,
@@ -1085,60 +1078,32 @@ private fun CallRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-
             Text(
                 call.number,
                 color = Muted,
                 fontSize = 12.sp,
                 maxLines = 1
             )
-
-            Row(
-                verticalAlignment =
-                    Alignment.CenterVertically
-            ) {
-
-                Icon(
-                    icon,
-                    null,
-                    tint = accent,
-                    modifier = Modifier.size(14.dp)
-                )
-
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, null, tint = accent, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
-
                 Text(
                     call.type,
                     color = accent,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold
                 )
-
                 Text(
                     " • ${call.duration}",
                     color = Muted,
                     fontSize = 11.sp
                 )
             }
-
-            Text(
-                call.date,
-                color = Muted,
-                fontSize = 10.sp
-            )
+            Text(call.date, color = Muted, fontSize = 10.sp)
         }
 
-        // MORE OPTIONS
-
-        IconButton(
-            onClick = onClick
-        ) {
-
-            Icon(
-                Icons.Default.MoreVert,
-                "More options",
-                tint = Muted
-            )
+        IconButton(onClick = onClick) {
+            Icon(Icons.Default.MoreVert, "Call details", tint = Muted)
         }
     }
 
