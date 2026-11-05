@@ -56,9 +56,7 @@ fun CallerProScreen() {
     val context = LocalContext.current
 
     var calls by remember { mutableStateOf(listOf<CallEntry>()) }
-    var callMessage by remember {
-        mutableStateOf("Allow permission to view call history")
-    }
+    var callMessage by remember { mutableStateOf("Checking permission...") }
     var hasMore by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
 
@@ -83,7 +81,6 @@ fun CallerProScreen() {
         }
 
         val offset = if (loadMore) calls.size else 0
-
         isLoading = true
         callMessage = "Loading calls..."
 
@@ -169,7 +166,7 @@ fun CallerProScreen() {
                     }
                 }
 
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 Handler(Looper.getMainLooper()).post {
                     isLoading = false
                     callMessage = "Unable to load calls. Please try again."
@@ -184,15 +181,19 @@ fun CallerProScreen() {
         permissionGranted = granted
 
         if (granted) {
+            callMessage = "Permission granted. Loading calls..."
             loadCallHistory()
         } else {
-            callMessage = "Permission denied"
+            callMessage = "Call History permission is required. Tap Refresh to try again."
         }
     }
 
-    LaunchedEffect(permissionGranted) {
+    // Ask for permission automatically when the app opens.
+    LaunchedEffect(Unit) {
         if (permissionGranted) {
             loadCallHistory()
+        } else {
+            permissionLauncher.launch(Manifest.permission.READ_CALL_LOG)
         }
     }
 
@@ -253,7 +254,6 @@ fun CallerProScreen() {
                 )
             ) {
                 Column(Modifier.padding(18.dp)) {
-
                     Text(
                         "Call History",
                         color = Navy,
@@ -262,13 +262,19 @@ fun CallerProScreen() {
                     )
 
                     Spacer(Modifier.height(10.dp))
-
                     Text(callMessage, color = Color.DarkGray)
-
                     Spacer(Modifier.height(12.dp))
 
                     Button(
-                        onClick = { loadCallHistory() },
+                        onClick = {
+                            if (permissionGranted) {
+                                loadCallHistory()
+                            } else {
+                                permissionLauncher.launch(
+                                    Manifest.permission.READ_CALL_LOG
+                                )
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !isLoading,
                         colors = ButtonDefaults.buttonColors(
@@ -281,12 +287,9 @@ fun CallerProScreen() {
                     Spacer(Modifier.height(12.dp))
 
                     calls.forEach { call ->
-
                         HorizontalDivider()
 
-                        Column(
-                            Modifier.padding(vertical = 12.dp)
-                        ) {
+                        Column(Modifier.padding(vertical = 12.dp)) {
                             Text(
                                 call.name,
                                 color = Navy,
@@ -294,10 +297,7 @@ fun CallerProScreen() {
                                 fontSize = 17.sp
                             )
 
-                            Text(
-                                call.number,
-                                color = Color.DarkGray
-                            )
+                            Text(call.number, color = Color.DarkGray)
 
                             Text(
                                 "${call.type} • ${call.duration}",
@@ -344,7 +344,6 @@ fun CallerProScreen() {
                 )
             ) {
                 Column(Modifier.padding(20.dp)) {
-
                     Text(
                         "Recording Library",
                         color = Navy,
@@ -353,9 +352,7 @@ fun CallerProScreen() {
                     )
 
                     Spacer(Modifier.height(12.dp))
-
                     Text(message, color = Color.DarkGray)
-
                     Spacer(Modifier.height(18.dp))
 
                     Button(
