@@ -3,8 +3,6 @@ package com.callerpro.app
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.media.MediaPlayer
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -38,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -59,8 +58,19 @@ data class CallEntry(
 )
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Create Caller Pro's private recording folder.
+        val recordingsFolder = File(
+            filesDir,
+            "Caller Pro/Recordings"
+        )
+
+        if (!recordingsFolder.exists()) {
+            recordingsFolder.mkdirs()
+        }
 
         window.statusBarColor =
             android.graphics.Color.rgb(0, 17, 61)
@@ -77,6 +87,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CallerProScreen() {
+
     val context = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -125,19 +136,8 @@ fun CallerProScreen() {
         )
     }
 
-    var selectedAudio by remember {
-        mutableStateOf<Uri?>(null)
-    }
-
-    var player by remember {
-        mutableStateOf<MediaPlayer?>(null)
-    }
-
-    var audioMessage by remember {
-        mutableStateOf("No recording selected")
-    }
-
     fun loadCallHistory(loadMore: Boolean = false) {
+
         if (!permissionGranted || isLoading) return
 
         if (!loadMore) {
@@ -151,7 +151,9 @@ fun CallerProScreen() {
         callMessage = "Loading calls..."
 
         Thread {
+
             try {
+
                 val result = mutableListOf<CallEntry>()
                 var moreAvailable = false
 
@@ -172,6 +174,7 @@ fun CallerProScreen() {
                 ) ?: throw Exception("Call history unavailable")
 
                 cursor.use {
+
                     val nameIndex =
                         it.getColumnIndex(CallLog.Calls.CACHED_NAME)
 
@@ -198,9 +201,11 @@ fun CallerProScreen() {
                     }
 
                     if (it.moveToPosition(offset)) {
+
                         var count = 0
 
                         do {
+
                             if (count >= 25) {
                                 moreAvailable = true
                                 break
@@ -212,6 +217,7 @@ fun CallerProScreen() {
                             val type = when (
                                 it.getInt(typeIndex)
                             ) {
+
                                 CallLog.Calls.INCOMING_TYPE ->
                                     "Incoming"
 
@@ -228,6 +234,7 @@ fun CallerProScreen() {
                             }
 
                             val dateValue = it.getLong(dateIndex)
+
                             val durationValue =
                                 it.getLong(durationIndex)
 
@@ -262,6 +269,7 @@ fun CallerProScreen() {
                 }
 
                 Handler(Looper.getMainLooper()).post {
+
                     calls = if (loadMore) {
                         calls + result
                     } else {
@@ -279,12 +287,14 @@ fun CallerProScreen() {
                 }
 
             } catch (e: Exception) {
+
                 Handler(Looper.getMainLooper()).post {
                     isLoading = false
                     callMessage =
                         "Unable to load calls. Please try again."
                 }
             }
+
         }.start()
     }
 
@@ -304,6 +314,7 @@ fun CallerProScreen() {
         }
 
     LaunchedEffect(Unit) {
+
         if (permissionGranted) {
             loadCallHistory()
         } else {
@@ -313,33 +324,8 @@ fun CallerProScreen() {
         }
     }
 
-    val audioPicker =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.OpenDocument()
-        ) { uri ->
-
-            if (uri != null) {
-                try {
-                    context.contentResolver
-                        .takePersistableUriPermission(
-                            uri,
-                            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        )
-                } catch (_: Exception) {
-                }
-
-                player?.release()
-                player = null
-
-                selectedAudio = uri
-                audioMessage = "Audio selected successfully"
-            }
-        }
-
     DisposableEffect(Unit) {
-        onDispose {
-            player?.release()
-        }
+        onDispose { }
     }
 
     val filteredCalls = calls.filter { call ->
@@ -360,9 +346,11 @@ fun CallerProScreen() {
     }
 
     ModalNavigationDrawer(
+
         drawerState = drawerState,
 
         drawerContent = {
+
             ModalDrawerSheet(
                 modifier = Modifier
                     .fillMaxWidth(0.86f)
@@ -390,7 +378,9 @@ fun CallerProScreen() {
                         )
                         .padding(24.dp)
                 ) {
+
                     Column {
+
                         Icon(
                             Icons.Default.Call,
                             contentDescription = null,
@@ -434,6 +424,7 @@ fun CallerProScreen() {
                 menuItems.forEach { item ->
 
                     NavigationDrawerItem(
+
                         icon = {
                             Icon(
                                 item.second,
@@ -452,6 +443,7 @@ fun CallerProScreen() {
                         selected = selectedMenu == item.first,
 
                         onClick = {
+
                             selectedMenu = item.first
 
                             scope.launch {
@@ -459,7 +451,9 @@ fun CallerProScreen() {
                             }
 
                             when (item.third) {
+
                                 "calls" -> {
+
                                     selectedFilter =
                                         when (item.first) {
                                             "Incoming Calls" -> "Incoming"
@@ -470,9 +464,8 @@ fun CallerProScreen() {
                                 }
 
                                 "recordings" -> {
-                                    audioPicker.launch(
-                                        arrayOf("audio/*")
-                                    )
+                                    infoDialog =
+                                        "Recording Library\n\nAutomatic recording detection will be added in a later development step."
                                 }
 
                                 else -> {
@@ -495,6 +488,7 @@ fun CallerProScreen() {
                 }
             }
         }
+
     ) {
 
         Column(
@@ -531,6 +525,7 @@ fun CallerProScreen() {
                         }
                     }
                 ) {
+
                     Icon(
                         Icons.Default.Menu,
                         "Menu",
@@ -556,6 +551,7 @@ fun CallerProScreen() {
                 Column(
                     modifier = Modifier.weight(1f)
                 ) {
+
                     Text(
                         "Caller Pro",
                         color = Color.White,
@@ -575,6 +571,7 @@ fun CallerProScreen() {
                         searchOpen = !searchOpen
                     }
                 ) {
+
                     Icon(
                         Icons.Default.Search,
                         "Search",
@@ -591,6 +588,7 @@ fun CallerProScreen() {
 
                     shape = RoundedCornerShape(20.dp)
                 ) {
+
                     Text(
                         if (permissionGranted) {
                             "ACCESS ON"
@@ -613,6 +611,7 @@ fun CallerProScreen() {
             // SEARCH BAR
 
             if (searchOpen) {
+
                 OutlinedTextField(
                     value = searchText,
 
@@ -631,12 +630,14 @@ fun CallerProScreen() {
                     singleLine = true,
 
                     trailingIcon = {
+
                         IconButton(
                             onClick = {
                                 searchText = ""
                                 searchOpen = false
                             }
                         ) {
+
                             Icon(
                                 Icons.Default.Close,
                                 "Close"
@@ -768,6 +769,7 @@ fun CallerProScreen() {
 
                             enabled = !isLoading
                         ) {
+
                             Icon(
                                 Icons.Default.Refresh,
                                 "Refresh",
@@ -797,6 +799,7 @@ fun CallerProScreen() {
                         ).forEach { filter ->
 
                             FilterChip(
+
                                 selected =
                                     selectedFilter == filter,
 
@@ -832,6 +835,7 @@ fun CallerProScreen() {
                             contentAlignment =
                                 Alignment.Center
                         ) {
+
                             Text(
                                 if (!permissionGranted) {
                                     "Please grant Call History permission"
@@ -856,6 +860,7 @@ fun CallerProScreen() {
                             items(filteredCalls) { call ->
 
                                 CallRow(call) {
+
                                     infoDialog =
                                         "${call.name}\n" +
                                         "${call.number}\n" +
@@ -869,6 +874,7 @@ fun CallerProScreen() {
                             if (hasMore || isLoading) {
 
                                 item {
+
                                     Button(
                                         onClick = {
                                             loadCallHistory(
@@ -922,6 +928,7 @@ fun CallerProScreen() {
     if (infoDialog != null) {
 
         AlertDialog(
+
             onDismissRequest = {
                 infoDialog = null
             },
@@ -937,6 +944,7 @@ fun CallerProScreen() {
             },
 
             confirmButton = {
+
                 TextButton(
                     onClick = {
                         infoDialog = null
@@ -1117,7 +1125,7 @@ private fun CallRow(
             )
         }
 
-        // MORE OPTIONS - NO PLAY BUTTON
+        // MORE OPTIONS
 
         IconButton(
             onClick = onClick
