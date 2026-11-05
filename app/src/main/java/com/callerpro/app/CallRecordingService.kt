@@ -54,7 +54,7 @@ class CallRecordingService : Service() {
 
         try {
             val notification = buildNotification(
-                "Ready for your next call. Recording starts when it connects."
+                "Ready for your next call"
             )
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -69,6 +69,7 @@ class CallRecordingService : Service() {
             }
 
             registerCallStateListener()
+
         } catch (_: Exception) {
             stopSelf()
         }
@@ -152,9 +153,7 @@ class CallRecordingService : Service() {
             getSystemService(NotificationManager::class.java)
                 .notify(
                     NOTIFICATION_ID,
-                    buildNotification(
-                        "Call connected — microphone recording is active."
-                    )
+                    buildNotification("Recording is active")
                 )
 
         } catch (_: Exception) {
@@ -218,11 +217,17 @@ class CallRecordingService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("Caller Pro recording")
+            .setContentTitle("Caller Pro")
             .setContentText(message)
             .setContentIntent(openPendingIntent)
             .setOngoing(true)
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setForegroundServiceBehavior(
+                NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE
+            )
             .addAction(
                 android.R.drawable.ic_media_pause,
                 "Stop",
@@ -240,7 +245,12 @@ class CallRecordingService : Service() {
             )
 
             channel.description =
-                "Visible status for Caller Pro call recording"
+                "Silent, compact Caller Pro recording status"
+
+            channel.setSound(null, null)
+            channel.enableVibration(false)
+            channel.enableLights(false)
+            channel.setShowBadge(false)
 
             getSystemService(NotificationManager::class.java)
                 .createNotificationChannel(channel)
