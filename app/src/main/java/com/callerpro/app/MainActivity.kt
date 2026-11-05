@@ -1,15 +1,21 @@
+
 package com.callerpro.app
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
+import android.provider.CallLog
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,9 +25,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val Navy = Color(0xFF00022E)
 private val Red = Color(0xFFE52D45)
+
+data class CallEntry(
+    val name: String,
+    val number: String,
+    val type: String,
+    val date: String,
+    val duration: String
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,13 +53,126 @@ class MainActivity : ComponentActivity() {
 fun CallerProScreen() {
     val context = LocalContext.current
 
+    var calls by remember { mutableStateOf(listOf<CallEntry>()) }
+    var callMessage by remember { mutableStateOf("Allow permission to view call history") }
+
+    var permissionGranted by remember {
+        mutableStateOf(
+            context.checkSelfPermission(Manifest.permission.READ_CALL_LOG) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+
     var selectedAudio by remember { mutableStateOf<Uri?>(null) }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
-    var isPlaying by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("No recording selected") }
 
+    fun loadCallHistory() {
+        if (!permissionGranted) {
+            callMessage = "Please allow call history permission"
+            return
+        }
+
+        try {
+            val result = mutableListOf<CallEntry>()
+
+            val projection = arrayOf(
+                CallLog.Calls.CACHED_NAME,
+                CallLog.Calls.NUMBER,
+                CallLog.Calls.TYPE,
+                CallLog.Calls.DATE,
+                CallLog.Calls.DURATION
+            )
+
+            context.contentResolver.query(
+                CallLog.Calls.CONTENT_URI,
+                projection,
+                null,
+                null,
+                "${CallLog.Calls.DATE} DESC"
+            )?.use { cursor ->
+
+                val nameIndex = cursor.getColumnIndex(CallLog.Calls.CACHED_NAME)
+                val numberIndex = cursor.getColumnIndex(CallLog.Calls.NUMBER)
+                val typeIndex = cursor.getColumnIndex(CallLog.Calls.TYPE)
+                val dateIndex = cursor.getColumnIndex(CallLog.Calls.DATE)
+                val durationIndex = cursor.getColumnIndex(CallLog.Calls.DURATION)
+
+                while (cursor.moveToNext()) {
+                    val savedName = if (nameIndex >= 0) {
+                        cursor.getString(nameIndex)
+                    } else null
+
+                    val number = if (numberIndex >= 0) {
+                        cursor.getString(numberIndex)
+                    } else null
+
+                    val typeValue = cursor.getInt(typeIndex)
+
+                    val type = when (typeValue) {
+                        CallLog.Calls.INCOMING_TYPE -> "Incoming"
+                        CallLog.Calls.OUTGOING_TYPE -> "Outgoing"
+                        CallLog.Calls.MISSED_TYPE -> "Missed"
+                        CallLog.Calls.REJECTED_TYPE -> "Rejected"
+                        else -> "Other"
+                    }
+
+                    val dateValue = cursor.getLong(dateIndex)
+                    val durationValue = cursor.getLong(durationIndex)
+
+                    val formattedDate = SimpleDateFormat(
+                        "dd MMM yyyy, hh:mm a",
+                        Locale.getDefault()
+                    ).format(Date(dateValue))
+
+                    val formattedDuration =
+                        "${durationValue / 60} min ${durationValue % 60} sec"
+
+                    result.add(
+                        CallEntry(
+                            name = savedName?.takeIf { it.isNotBlank() } ?: "Unknown caller",
+                            number = number ?: "Unknown number",
+                            type = type,
+                            date = formattedDate,
+                            duration = formattedDuration
+                        )
+                    )
+                }
+            }
+
+            calls = result
+            callMessage = if (result.isEmpty()) {
+                "No call history found"
+            } else {
+                "${result.size} recent calls found"
+            }
+
+        } catch (_: SecurityException) {
+            callMessage = "Call history permission is required"
+        } catch (_: Exception) {
+            callMessage = "Unable to load call history"
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        permissionGranted = granted
+        if (granted) {
+            loadCallHistory()
+        } else {
+            callMessage = "Permission denied"
+        }
+    }
+
+    LaunchedEffect(permissionGranted) {
+        if (permissionGranted) {
+            loadCallHistory()
+        }
+    }
+
     val audioPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
+        ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
             try {
@@ -55,7 +185,6 @@ fun CallerProScreen() {
 
             player?.release()
             player = null
-            isPlaying = false
             selectedAudio = uri
             message = "Audio selected successfully"
         }
@@ -72,6 +201,7 @@ fun CallerProScreen() {
             modifier = Modifier
                 .fillMaxSize()
                 .background(Navy)
+                .verticalScroll(rememberScrollState())
                 .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -88,14 +218,81 @@ fun CallerProScreen() {
                 fontSize = 15.sp
             )
 
-            Spacer(Modifier.height(30.dp))
+            Spacer(Modifier.height(24.dp))
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White
-                )
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Column(Modifier.padding(18.dp)) {
+                    Text(
+                        "Call History",
+                        color = Navy,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(Modifier.height(10.dp))
+
+                    Text(callMessage, color = Color.DarkGray)
+
+                    Spacer(Modifier.height(12.dp))
+
+                    Button(
+                        onClick = {
+                            if (permissionGranted) {
+                                loadCallHistory()
+                            } else {
+                                permissionLauncher.launch(
+                                    Manifest.permission.READ_CALL_LOG
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Red
+                        )
+                    ) {
+                        Text(
+                            if (permissionGranted) "Refresh Call History"
+                            else "Allow Call History"
+                        )
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    calls.forEach { call ->
+                        HorizontalDivider()
+
+                        Column(Modifier.padding(vertical = 12.dp)) {
+                            Text(
+                                call.name,
+                                color = Navy,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp
+                            )
+                            Text(call.number, color = Color.DarkGray)
+                            Text(
+                                "${call.type} • ${call.duration}",
+                                color = Red
+                            )
+                            Text(
+                                call.date,
+                                color = Color.Gray,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(22.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
                 Column(Modifier.padding(20.dp)) {
                     Text(
@@ -107,12 +304,9 @@ fun CallerProScreen() {
 
                     Spacer(Modifier.height(12.dp))
 
-                    Text(
-                        message,
-                        color = Color.DarkGray
-                    )
+                    Text(message, color = Color.DarkGray)
 
-                    Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(18.dp))
 
                     Button(
                         onClick = {
@@ -141,18 +335,15 @@ fun CallerProScreen() {
 
                                     if (player != null) {
                                         player?.setOnCompletionListener {
-                                            isPlaying = false
                                             message = "Playback completed"
                                         }
                                         player?.start()
-                                        isPlaying = true
                                         message = "Playing recording"
                                     } else {
                                         message = "Unable to play this audio file"
                                     }
                                 } catch (_: Exception) {
                                     message = "Unable to play this audio file"
-                                    isPlaying = false
                                 }
                             }
                         },
@@ -171,7 +362,6 @@ fun CallerProScreen() {
                         onClick = {
                             player?.release()
                             player = null
-                            isPlaying = false
                             message = "Playback stopped"
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -181,13 +371,15 @@ fun CallerProScreen() {
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(24.dp))
 
             Text(
                 "Private audio library",
                 color = Color.LightGray,
                 fontSize = 14.sp
             )
+
+            Spacer(Modifier.height(20.dp))
         }
     }
 }
