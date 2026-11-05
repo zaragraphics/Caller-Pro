@@ -42,7 +42,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val Navy = Color(0xFF061B49)
 private val DeepBlue = Color(0xFF00113D)
 private val Blue = Color(0xFF087BFF)
 private val Cyan = Color(0xFF22C8F5)
@@ -62,6 +61,13 @@ data class CallEntry(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        window.statusBarColor =
+            android.graphics.Color.rgb(0, 17, 61)
+
+        window.navigationBarColor =
+            android.graphics.Color.BLACK
+
         setContent {
             CallerProScreen()
         }
@@ -75,16 +81,41 @@ fun CallerProScreen() {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
-    var calls by remember { mutableStateOf(listOf<CallEntry>()) }
-    var callMessage by remember { mutableStateOf("Checking permission...") }
-    var hasMore by remember { mutableStateOf(false) }
-    var isLoading by remember { mutableStateOf(false) }
+    var calls by remember {
+        mutableStateOf(listOf<CallEntry>())
+    }
 
-    var selectedFilter by remember { mutableStateOf("All") }
-    var searchText by remember { mutableStateOf("") }
-    var searchOpen by remember { mutableStateOf(false) }
-    var selectedMenu by remember { mutableStateOf("All Calls") }
-    var infoDialog by remember { mutableStateOf<String?>(null) }
+    var callMessage by remember {
+        mutableStateOf("Checking permission...")
+    }
+
+    var hasMore by remember {
+        mutableStateOf(false)
+    }
+
+    var isLoading by remember {
+        mutableStateOf(false)
+    }
+
+    var selectedFilter by remember {
+        mutableStateOf("All")
+    }
+
+    var searchText by remember {
+        mutableStateOf("")
+    }
+
+    var searchOpen by remember {
+        mutableStateOf(false)
+    }
+
+    var selectedMenu by remember {
+        mutableStateOf("All Calls")
+    }
+
+    var infoDialog by remember {
+        mutableStateOf<String?>(null)
+    }
 
     var permissionGranted by remember {
         mutableStateOf(
@@ -94,8 +125,14 @@ fun CallerProScreen() {
         )
     }
 
-    var selectedAudio by remember { mutableStateOf<Uri?>(null) }
-    var player by remember { mutableStateOf<MediaPlayer?>(null) }
+    var selectedAudio by remember {
+        mutableStateOf<Uri?>(null)
+    }
+
+    var player by remember {
+        mutableStateOf<MediaPlayer?>(null)
+    }
+
     var audioMessage by remember {
         mutableStateOf("No recording selected")
     }
@@ -109,6 +146,7 @@ fun CallerProScreen() {
         }
 
         val offset = if (loadMore) calls.size else 0
+
         isLoading = true
         callMessage = "Loading calls..."
 
@@ -136,17 +174,24 @@ fun CallerProScreen() {
                 cursor.use {
                     val nameIndex =
                         it.getColumnIndex(CallLog.Calls.CACHED_NAME)
+
                     val numberIndex =
                         it.getColumnIndex(CallLog.Calls.NUMBER)
+
                     val typeIndex =
                         it.getColumnIndex(CallLog.Calls.TYPE)
+
                     val dateIndex =
                         it.getColumnIndex(CallLog.Calls.DATE)
+
                     val durationIndex =
                         it.getColumnIndex(CallLog.Calls.DURATION)
 
-                    if (nameIndex < 0 || numberIndex < 0 ||
-                        typeIndex < 0 || dateIndex < 0 ||
+                    if (
+                        nameIndex < 0 ||
+                        numberIndex < 0 ||
+                        typeIndex < 0 ||
+                        dateIndex < 0 ||
                         durationIndex < 0
                     ) {
                         throw Exception("Call-log data unavailable")
@@ -169,12 +214,16 @@ fun CallerProScreen() {
                             ) {
                                 CallLog.Calls.INCOMING_TYPE ->
                                     "Incoming"
+
                                 CallLog.Calls.OUTGOING_TYPE ->
                                     "Outgoing"
+
                                 CallLog.Calls.MISSED_TYPE ->
                                     "Missed"
+
                                 CallLog.Calls.REJECTED_TYPE ->
                                     "Rejected"
+
                                 else -> "Other"
                             }
 
@@ -193,10 +242,16 @@ fun CallerProScreen() {
                                     name = savedName?.takeIf {
                                         it.isNotBlank()
                                     } ?: "Unknown caller",
+
                                     number = number ?: "Unknown number",
+
                                     type = type,
+
                                     date = formattedDate,
-                                    duration = "${durationValue / 60} min ${durationValue % 60} sec"
+
+                                    duration =
+                                        "${durationValue / 60} min " +
+                                        "${durationValue % 60} sec"
                                 )
                             )
 
@@ -237,6 +292,7 @@ fun CallerProScreen() {
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
+
             permissionGranted = granted
 
             if (granted) {
@@ -261,6 +317,7 @@ fun CallerProScreen() {
         rememberLauncherForActivityResult(
             ActivityResultContracts.OpenDocument()
         ) { uri ->
+
             if (uri != null) {
                 try {
                     context.contentResolver
@@ -273,6 +330,7 @@ fun CallerProScreen() {
 
                 player?.release()
                 player = null
+
                 selectedAudio = uri
                 audioMessage = "Audio selected successfully"
             }
@@ -285,6 +343,7 @@ fun CallerProScreen() {
     }
 
     val filteredCalls = calls.filter { call ->
+
         val matchesFilter = when (selectedFilter) {
             "Incoming" -> call.type == "Incoming"
             "Outgoing" -> call.type == "Outgoing"
@@ -302,12 +361,15 @@ fun CallerProScreen() {
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+
         drawerContent = {
             ModalDrawerSheet(
                 modifier = Modifier
                     .fillMaxWidth(0.86f)
                     .fillMaxHeight(),
+
                 drawerContainerColor = Color.White,
+
                 drawerShape = RoundedCornerShape(
                     topEnd = 26.dp,
                     bottomEnd = 26.dp
@@ -319,7 +381,11 @@ fun CallerProScreen() {
                         .fillMaxWidth()
                         .background(
                             Brush.linearGradient(
-                                listOf(DeepBlue, Blue, Cyan)
+                                listOf(
+                                    DeepBlue,
+                                    Blue,
+                                    Cyan
+                                )
                             )
                         )
                         .padding(24.dp)
@@ -366,35 +432,47 @@ fun CallerProScreen() {
                 )
 
                 menuItems.forEach { item ->
+
                     NavigationDrawerItem(
                         icon = {
-                            Icon(item.second, null, tint = Blue)
+                            Icon(
+                                item.second,
+                                null,
+                                tint = Blue
+                            )
                         },
+
                         label = {
                             Text(
                                 item.first,
                                 fontWeight = FontWeight.SemiBold
                             )
                         },
+
                         selected = selectedMenu == item.first,
+
                         onClick = {
                             selectedMenu = item.first
+
                             scope.launch {
                                 drawerState.close()
                             }
 
                             when (item.third) {
                                 "calls" -> {
-                                    selectedFilter = when (item.first) {
-                                        "Incoming Calls" -> "Incoming"
-                                        "Outgoing Calls" -> "Outgoing"
-                                        "Missed Calls" -> "Missed"
-                                        else -> "All"
-                                    }
+                                    selectedFilter =
+                                        when (item.first) {
+                                            "Incoming Calls" -> "Incoming"
+                                            "Outgoing Calls" -> "Outgoing"
+                                            "Missed Calls" -> "Missed"
+                                            else -> "All"
+                                        }
                                 }
 
                                 "recordings" -> {
-                                    infoDialog = "Recording Library"
+                                    audioPicker.launch(
+                                        arrayOf("audio/*")
+                                    )
                                 }
 
                                 else -> {
@@ -402,14 +480,17 @@ fun CallerProScreen() {
                                 }
                             }
                         },
+
                         modifier = Modifier.padding(
                             horizontal = 12.dp,
                             vertical = 2.dp
                         ),
-                        colors = NavigationDrawerItemDefaults.colors(
-                            selectedContainerColor = PaleBlue,
-                            selectedTextColor = Blue
-                        )
+
+                        colors =
+                            NavigationDrawerItemDefaults.colors(
+                                selectedContainerColor = PaleBlue,
+                                selectedTextColor = Blue
+                            )
                     )
                 }
             }
@@ -430,7 +511,7 @@ fun CallerProScreen() {
                 )
         ) {
 
-            // TOP APP BAR
+            // TOP HEADER
 
             Row(
                 modifier = Modifier
@@ -439,6 +520,7 @@ fun CallerProScreen() {
                         horizontal = 12.dp,
                         vertical = 10.dp
                     ),
+
                 verticalAlignment = Alignment.CenterVertically
             ) {
 
@@ -506,13 +588,20 @@ fun CallerProScreen() {
                     } else {
                         Color(0xFF667085)
                     },
+
                     shape = RoundedCornerShape(20.dp)
                 ) {
                     Text(
-                        if (permissionGranted) "ACCESS ON" else "ACCESS OFF",
+                        if (permissionGranted) {
+                            "ACCESS ON"
+                        } else {
+                            "ACCESS OFF"
+                        },
+
                         color = Color.White,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
+
                         modifier = Modifier.padding(
                             horizontal = 9.dp,
                             vertical = 7.dp
@@ -521,19 +610,26 @@ fun CallerProScreen() {
                 }
             }
 
+            // SEARCH BAR
+
             if (searchOpen) {
                 OutlinedTextField(
                     value = searchText,
+
                     onValueChange = {
                         searchText = it
                     },
+
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp),
+
                     placeholder = {
                         Text("Search name or number")
                     },
+
                     singleLine = true,
+
                     trailingIcon = {
                         IconButton(
                             onClick = {
@@ -541,9 +637,13 @@ fun CallerProScreen() {
                                 searchOpen = false
                             }
                         ) {
-                            Icon(Icons.Default.Close, "Close")
+                            Icon(
+                                Icons.Default.Close,
+                                "Close"
+                            )
                         }
                     },
+
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = Color.White,
                         unfocusedContainerColor = Color.White,
@@ -558,9 +658,15 @@ fun CallerProScreen() {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                    .padding(
+                        horizontal = 12.dp,
+                        vertical = 10.dp
+                    ),
+
+                horizontalArrangement =
+                    Arrangement.spacedBy(7.dp)
             ) {
+
                 StatCard(
                     "All",
                     calls.size.toString(),
@@ -571,7 +677,9 @@ fun CallerProScreen() {
 
                 StatCard(
                     "Incoming",
-                    calls.count { it.type == "Incoming" }.toString(),
+                    calls.count {
+                        it.type == "Incoming"
+                    }.toString(),
                     Icons.Default.CallReceived,
                     Color(0xFF19A86B),
                     Modifier.weight(1f)
@@ -579,7 +687,9 @@ fun CallerProScreen() {
 
                 StatCard(
                     "Outgoing",
-                    calls.count { it.type == "Outgoing" }.toString(),
+                    calls.count {
+                        it.type == "Outgoing"
+                    }.toString(),
                     Icons.Default.CallMade,
                     Color(0xFF00A6D6),
                     Modifier.weight(1f)
@@ -587,23 +697,27 @@ fun CallerProScreen() {
 
                 StatCard(
                     "Missed",
-                    calls.count { it.type == "Missed" }.toString(),
+                    calls.count {
+                        it.type == "Missed"
+                    }.toString(),
                     Icons.Default.CallMissed,
                     Color(0xFFE5485D),
                     Modifier.weight(1f)
                 )
             }
 
-            // WHITE MAIN CONTENT
+            // WHITE CALL HISTORY AREA
 
             Card(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(top = 4.dp),
+
                 shape = RoundedCornerShape(
                     topStart = 25.dp,
                     topEnd = 25.dp
                 ),
+
                 colors = CardDefaults.cardColors(
                     containerColor = Color.White
                 )
@@ -618,9 +732,13 @@ fun CallerProScreen() {
                         )
                 ) {
 
+                    // TITLE AND REFRESH
+
                     Row(
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment =
+                            Alignment.CenterVertically
                     ) {
+
                         Text(
                             "Call History",
                             color = Ink,
@@ -647,6 +765,7 @@ fun CallerProScreen() {
                                     )
                                 }
                             },
+
                             enabled = !isLoading
                         ) {
                             Icon(
@@ -657,7 +776,7 @@ fun CallerProScreen() {
                         }
                     }
 
-                    // FILTER TABS
+                    // FILTER BUTTONS
 
                     Row(
                         modifier = Modifier
@@ -665,8 +784,11 @@ fun CallerProScreen() {
                             .horizontalScroll(
                                 rememberScrollState()
                             ),
-                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+
+                        horizontalArrangement =
+                            Arrangement.spacedBy(7.dp)
                     ) {
+
                         listOf(
                             "All",
                             "Incoming",
@@ -675,30 +797,40 @@ fun CallerProScreen() {
                         ).forEach { filter ->
 
                             FilterChip(
-                                selected = selectedFilter == filter,
+                                selected =
+                                    selectedFilter == filter,
+
                                 onClick = {
                                     selectedFilter = filter
                                 },
+
                                 label = {
                                     Text(filter)
                                 },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Blue,
-                                    selectedLabelColor = Color.White
-                                )
+
+                                colors =
+                                    FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Blue,
+                                        selectedLabelColor = Color.White
+                                    )
                             )
                         }
                     }
 
                     Spacer(Modifier.height(8.dp))
 
-                    if (filteredCalls.isEmpty() && !isLoading) {
+                    if (
+                        filteredCalls.isEmpty() &&
+                        !isLoading
+                    ) {
 
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f),
-                            contentAlignment = Alignment.Center
+
+                            contentAlignment =
+                                Alignment.Center
                         ) {
                             Text(
                                 if (!permissionGranted) {
@@ -706,6 +838,7 @@ fun CallerProScreen() {
                                 } else {
                                     "No calls found"
                                 },
+
                                 color = Muted
                             )
                         }
@@ -714,6 +847,7 @@ fun CallerProScreen() {
 
                         LazyColumn(
                             modifier = Modifier.weight(1f),
+
                             contentPadding = PaddingValues(
                                 bottom = 10.dp
                             )
@@ -730,7 +864,10 @@ fun CallerProScreen() {
                                 }
                             }
 
+                            // LOAD MORE 25 CALLS
+
                             if (hasMore || isLoading) {
+
                                 item {
                                     Button(
                                         onClick = {
@@ -738,22 +875,32 @@ fun CallerProScreen() {
                                                 loadMore = true
                                             )
                                         },
-                                        enabled = hasMore && !isLoading,
+
+                                        enabled =
+                                            hasMore && !isLoading,
+
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(vertical = 12.dp),
-                                        shape = RoundedCornerShape(28.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = Blue
-                                        )
+
+                                        shape =
+                                            RoundedCornerShape(28.dp),
+
+                                        colors =
+                                            ButtonDefaults.buttonColors(
+                                                containerColor = Blue
+                                            )
                                     ) {
+
                                         Text(
                                             if (isLoading) {
                                                 "Loading..."
                                             } else {
                                                 "Load More (25)"
                                             },
-                                            fontWeight = FontWeight.Bold
+
+                                            fontWeight =
+                                                FontWeight.Bold
                                         )
 
                                         Icon(
@@ -765,108 +912,30 @@ fun CallerProScreen() {
                             }
                         }
                     }
-
-                    // RECORDING LIBRARY
-
-                    HorizontalDivider(color = Line)
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(
-                                "Recording Library",
-                                color = Ink,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 17.sp
-                            )
-
-                            Text(
-                                audioMessage,
-                                color = Muted,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        IconButton(
-                            onClick = {
-                                audioPicker.launch(arrayOf("audio/*"))
-                            }
-                        ) {
-                            Icon(
-                                Icons.Default.FolderOpen,
-                                "Select audio",
-                                tint = Blue
-                            )
-                        }
-
-                        IconButton(
-                            enabled = selectedAudio != null,
-                            onClick = {
-                                try {
-                                    player?.release()
-                                    player = MediaPlayer.create(
-                                        context,
-                                        selectedAudio
-                                    )
-
-                                    if (player != null) {
-                                        player?.start()
-                                        audioMessage = "Playing recording"
-                                    } else {
-                                        audioMessage =
-                                            "Unable to play audio"
-                                    }
-                                } catch (_: Exception) {
-                                    audioMessage =
-                                        "Unable to play this audio file"
-                                }
-                            }
-                        ) {
-                            Icon(
-                                Icons.Default.PlayArrow,
-                                "Play",
-                                tint = Blue
-                            )
-                        }
-
-                        IconButton(
-                            onClick = {
-                                player?.release()
-                                player = null
-                                audioMessage = "Playback stopped"
-                            }
-                        ) {
-                            Icon(
-                                Icons.Default.Stop,
-                                "Stop",
-                                tint = Muted
-                            )
-                        }
-                    }
                 }
             }
         }
     }
 
+    // CALL DETAILS DIALOG
+
     if (infoDialog != null) {
+
         AlertDialog(
             onDismissRequest = {
                 infoDialog = null
             },
+
             title = {
-                Text(infoDialog!!.substringBefore("\n"))
+                Text(
+                    infoDialog!!.substringBefore("\n")
+                )
             },
+
             text = {
                 Text(infoDialog!!)
             },
+
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -888,23 +957,33 @@ private fun StatCard(
     accent: Color,
     modifier: Modifier = Modifier
 ) {
+
     Card(
         modifier = modifier.height(88.dp),
+
         shape = RoundedCornerShape(15.dp),
+
         colors = CardDefaults.cardColors(
             containerColor = Color.White
         ),
+
         elevation = CardDefaults.cardElevation(
             defaultElevation = 3.dp
         )
     ) {
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+
+            horizontalAlignment =
+                Alignment.CenterHorizontally,
+
+            verticalArrangement =
+                Arrangement.Center
         ) {
+
             Icon(
                 icon,
                 null,
@@ -934,6 +1013,7 @@ private fun CallRow(
     call: CallEntry,
     onClick: () -> Unit
 ) {
+
     val accent = when (call.type) {
         "Incoming" -> Color(0xFF16A36A)
         "Outgoing" -> Blue
@@ -953,16 +1033,23 @@ private fun CallRow(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+
+        verticalAlignment =
+            Alignment.CenterVertically
     ) {
+
+        // CALLER INITIAL
 
         Box(
             modifier = Modifier
                 .size(43.dp)
                 .clip(CircleShape)
                 .background(PaleBlue),
-            contentAlignment = Alignment.Center
+
+            contentAlignment =
+                Alignment.Center
         ) {
+
             Text(
                 call.name.firstOrNull()?.uppercase() ?: "?",
                 color = Blue,
@@ -973,9 +1060,12 @@ private fun CallRow(
 
         Spacer(Modifier.width(10.dp))
 
+        // CALL INFORMATION
+
         Column(
             modifier = Modifier.weight(1f)
         ) {
+
             Text(
                 call.name,
                 color = Ink,
@@ -993,8 +1083,10 @@ private fun CallRow(
             )
 
             Row(
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment =
+                    Alignment.CenterVertically
             ) {
+
                 Icon(
                     icon,
                     null,
@@ -1025,16 +1117,12 @@ private fun CallRow(
             )
         }
 
-        IconButton(onClick = onClick) {
-            Icon(
-                Icons.Default.PlayCircleOutline,
-                "Call details",
-                tint = Blue,
-                modifier = Modifier.size(25.dp)
-            )
-        }
+        // MORE OPTIONS - NO PLAY BUTTON
 
-        IconButton(onClick = onClick) {
+        IconButton(
+            onClick = onClick
+        ) {
+
             Icon(
                 Icons.Default.MoreVert,
                 "More options",
