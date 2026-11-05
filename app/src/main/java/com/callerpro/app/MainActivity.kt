@@ -161,6 +161,40 @@ fun CallerProScreen() {
         }
     }
 
+    val recordingPermissionLauncher = rememberLauncherForActivityResult(
+    ActivityResultContracts.RequestMultiplePermissions()
+) { grants ->
+
+    val audioAllowed =
+        grants[Manifest.permission.RECORD_AUDIO] == true ||
+        context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+        PackageManager.PERMISSION_GRANTED
+
+    val phoneAllowed =
+        grants[Manifest.permission.READ_PHONE_STATE] == true ||
+        context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) ==
+        PackageManager.PERMISSION_GRANTED
+
+    if (audioAllowed && phoneAllowed) {
+        try {
+            val serviceIntent = Intent(
+                context,
+                CallRecordingService::class.java
+            )
+            ContextCompat.startForegroundService(
+                context,
+                serviceIntent
+            )
+            infoDialog =
+                "Caller Pro is ready. Recording starts when the next call connects."
+        } catch (_: Exception) {
+            infoDialog = "Unable to start recording. Please try again."
+        }
+    } else {
+        infoDialog =
+            "Microphone and Phone permissions are required."
+    }
+    }
     val saveLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("audio/*")
     ) { destination ->
@@ -534,6 +568,45 @@ fun CallerProScreen() {
                 }
             }
 
+            Button(
+    onClick = {
+        val requiredPermissions = mutableListOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.READ_PHONE_STATE
+        )
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            requiredPermissions.add(
+                Manifest.permission.POST_NOTIFICATIONS
+            )
+        }
+
+        recordingPermissionLauncher.launch(
+            requiredPermissions.toTypedArray()
+        )
+    },
+    modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 16.dp, vertical = 4.dp),
+    colors = ButtonDefaults.buttonColors(
+        containerColor = Color(0xFF087BFF)
+    ),
+    shape = RoundedCornerShape(14.dp)
+) {
+    Icon(Icons.Default.Mic, null)
+    Spacer(Modifier.width(8.dp))
+    Text(
+        "Arm Recording for Next Call",
+        fontWeight = FontWeight.Bold
+    )
+}
+
+Text(
+    "Tap before a call. Microphone recording starts when the call connects.",
+    color = Color.White.copy(alpha = 0.82f),
+    fontSize = 10.sp,
+    modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+)
             if (searchOpen) {
                 OutlinedTextField(
                     value = searchText,
