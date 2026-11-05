@@ -457,9 +457,19 @@ fun CallerProScreen() {
                                 }
 
                                 "recordings" -> {
-                                    infoDialog =
-                                        "Recording Library\n\nAutomatic recording detection will be added in a later development step."
-                                }
+    val audioFiles =
+        RecordingStorage.scanAudioFiles(context)
+
+    infoDialog = if (audioFiles.isEmpty()) {
+        "Recording Library\n\nNo audio recordings found in Caller Pro storage yet.\n\nFolder:\nAndroid/data/com.callerpro.app/files/Music/Caller Pro/Recordings"
+    } else {
+        "Recording Library\n\nFound ${audioFiles.size} audio file(s):\n\n" +
+            audioFiles.joinToString("\n\n") { file ->
+                val sizeMB = file.length() / (1024.0 * 1024.0)
+                "${file.name}\n${"%.2f".format(sizeMB)} MB"
+            }
+    }
+}
 
                                 else -> {
                                     infoDialog = item.first
