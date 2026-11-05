@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.CallLog
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -54,12 +56,17 @@ fun CallerProScreen() {
     val context = LocalContext.current
 
     var calls by remember { mutableStateOf(listOf<CallEntry>()) }
-    var callMessage by remember { mutableStateOf("Allow permission to view call history") }
+    var callMessage by remember {
+        mutableStateOf("Allow permission to view call history")
+    }
+    var hasMore by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(false) }
 
     var permissionGranted by remember {
         mutableStateOf(
-            context.checkSelfPermission(Manifest.permission.READ_CALL_LOG) ==
-                PackageManager.PERMISSION_GRANTED
+            context.checkSelfPermission(
+                Manifest.permission.READ_CALL_LOG
+            ) == PackageManager.PERMISSION_GRANTED
         )
     }
 
@@ -67,97 +74,115 @@ fun CallerProScreen() {
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var message by remember { mutableStateOf("No recording selected") }
 
-    fun loadCallHistory() {
-        if (!permissionGranted) {
-            callMessage = "Please allow call history permission"
-            return
+    fun loadCallHistory(loadMore: Boolean = false) {
+        if (!permissionGranted || isLoading) return
+
+        if (!loadMore) {
+            calls = emptyList()
+            hasMore = false
         }
 
-        try {
-            val result = mutableListOf<CallEntry>()
+        val offset = if (loadMore) calls.size else 0
 
-            val projection = arrayOf(
-                CallLog.Calls.CACHED_NAME,
-                CallLog.Calls.NUMBER,
-                CallLog.Calls.TYPE,
-                CallLog.Calls.DATE,
-                CallLog.Calls.DURATION
-            )
+        isLoading = true
+        callMessage = "Loading calls..."
 
-            context.contentResolver.query(
-                CallLog.Calls.CONTENT_URI,
-                projection,
-                null,
-                null,
-                "${CallLog.Calls.DATE} DESC"
-            )?.use { cursor ->
+        Thread {
+            try {
+                val result = mutableListOf<CallEntry>()
 
-                val nameIndex = cursor.getColumnIndex(CallLog.Calls.CACHED_NAME)
-                val numberIndex = cursor.getColumnIndex(CallLog.Calls.NUMBER)
-                val typeIndex = cursor.getColumnIndex(CallLog.Calls.TYPE)
-                val dateIndex = cursor.getColumnIndex(CallLog.Calls.DATE)
-                val durationIndex = cursor.getColumnIndex(CallLog.Calls.DURATION)
+                val projection = arrayOf(
+                    CallLog.Calls.CACHED_NAME,
+                    CallLog.Calls.NUMBER,
+                    CallLog.Calls.TYPE,
+                    CallLog.Calls.DATE,
+                    CallLog.Calls.DURATION
+                )
 
-                while (cursor.moveToNext()) {
-                    val savedName = if (nameIndex >= 0) {
-                        cursor.getString(nameIndex)
-                    } else null
+                context.contentResolver.query(
+                    CallLog.Calls.CONTENT_URI,
+                    projection,
+                    null,
+                    null,
+                    "${CallLog.Calls.DATE} DESC LIMIT 25 OFFSET $offset"
+                )?.use { cursor ->
 
-                    val number = if (numberIndex >= 0) {
-                        cursor.getString(numberIndex)
-                    } else null
+                    val nameIndex =
+                        cursor.getColumnIndex(CallLog.Calls.CACHED_NAME)
+                    val numberIndex =
+                        cursor.getColumnIndex(CallLog.Calls.NUMBER)
+                    val typeIndex =
+                        cursor.getColumnIndex(CallLog.Calls.TYPE)
+                    val dateIndex =
+                        cursor.getColumnIndex(CallLog.Calls.DATE)
+                    val durationIndex =
+                        cursor.getColumnIndex(CallLog.Calls.DURATION)
 
-                    val typeValue = cursor.getInt(typeIndex)
+                    while (cursor.moveToNext()) {
+                        val savedName =
+                            if (nameIndex >= 0) cursor.getString(nameIndex)
+                            else null
 
-                    val type = when (typeValue) {
-                        CallLog.Calls.INCOMING_TYPE -> "Incoming"
-                        CallLog.Calls.OUTGOING_TYPE -> "Outgoing"
-                        CallLog.Calls.MISSED_TYPE -> "Missed"
-                        CallLog.Calls.REJECTED_TYPE -> "Rejected"
-                        else -> "Other"
-                    }
+                        val number =
+                            if (numberIndex >= 0) cursor.getString(numberIndex)
+                            else null
 
-                    val dateValue = cursor.getLong(dateIndex)
-                    val durationValue = cursor.getLong(durationIndex)
+                        val type = when (cursor.getInt(typeIndex)) {
+                            CallLog.Calls.INCOMING_TYPE -> "Incoming"
+                            CallLog.Calls.OUTGOING_TYPE -> "Outgoing"
+                            CallLog.Calls.MISSED_TYPE -> "Missed"
+                            CallLog.Calls.REJECTED_TYPE -> "Rejected"
+                            else -> "Other"
+                        }
 
-                    val formattedDate = SimpleDateFormat(
-                        "dd MMM yyyy, hh:mm a",
-                        Locale.getDefault()
-                    ).format(Date(dateValue))
+                        val dateValue = cursor.getLong(dateIndex)
+                        val durationValue = cursor.getLong(durationIndex)
 
-                    val formattedDuration =
-                        "${durationValue / 60} min ${durationValue % 60} sec"
+                        val formattedDate = SimpleDateFormat(
+                            "dd MMM yyyy, hh:mm a",
+                            Locale.getDefault()
+                        ).format(Date(dateValue))
 
-                    result.add(
-                        CallEntry(
-                            name = savedName?.takeIf { it.isNotBlank() } ?: "Unknown caller",
-                            number = number ?: "Unknown number",
-                            type = type,
-                            date = formattedDate,
-                            duration = formattedDuration
+                        result.add(
+                            CallEntry(
+                                name = savedName?.takeIf {
+                                    it.isNotBlank()
+                                } ?: "Unknown caller",
+                                number = number ?: "Unknown number",
+                                type = type,
+                                date = formattedDate,
+                                duration = "${durationValue / 60} min ${durationValue % 60} sec"
+                            )
                         )
-                    )
+                    }
+                }
+
+                Handler(Looper.getMainLooper()).post {
+                    calls = if (loadMore) calls + result else result
+                    hasMore = result.size == 25
+                    isLoading = false
+
+                    callMessage = if (calls.isEmpty()) {
+                        "No call history found"
+                    } else {
+                        "Showing ${calls.size} calls"
+                    }
+                }
+
+            } catch (_: Exception) {
+                Handler(Looper.getMainLooper()).post {
+                    isLoading = false
+                    callMessage = "Unable to load calls. Please try again."
                 }
             }
-
-            calls = result
-            callMessage = if (result.isEmpty()) {
-                "No call history found"
-            } else {
-                "${result.size} recent calls found"
-            }
-
-        } catch (_: SecurityException) {
-            callMessage = "Call history permission is required"
-        } catch (_: Exception) {
-            callMessage = "Unable to load call history"
-        }
+        }.start()
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         permissionGranted = granted
+
         if (granted) {
             loadCallHistory()
         } else {
@@ -223,9 +248,12 @@ fun CallerProScreen() {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White
+                )
             ) {
                 Column(Modifier.padding(18.dp)) {
+
                     Text(
                         "Call History",
                         color = Navy,
@@ -240,47 +268,66 @@ fun CallerProScreen() {
                     Spacer(Modifier.height(12.dp))
 
                     Button(
-                        onClick = {
-                            if (permissionGranted) {
-                                loadCallHistory()
-                            } else {
-                                permissionLauncher.launch(
-                                    Manifest.permission.READ_CALL_LOG
-                                )
-                            }
-                        },
+                        onClick = { loadCallHistory() },
                         modifier = Modifier.fillMaxWidth(),
+                        enabled = !isLoading,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Red
                         )
                     ) {
-                        Text(
-                            if (permissionGranted) "Refresh Call History"
-                            else "Allow Call History"
-                        )
+                        Text("Refresh Call History")
                     }
 
                     Spacer(Modifier.height(12.dp))
 
                     calls.forEach { call ->
+
                         HorizontalDivider()
 
-                        Column(Modifier.padding(vertical = 12.dp)) {
+                        Column(
+                            Modifier.padding(vertical = 12.dp)
+                        ) {
                             Text(
                                 call.name,
                                 color = Navy,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 17.sp
                             )
-                            Text(call.number, color = Color.DarkGray)
+
+                            Text(
+                                call.number,
+                                color = Color.DarkGray
+                            )
+
                             Text(
                                 "${call.type} • ${call.duration}",
                                 color = Red
                             )
+
                             Text(
                                 call.date,
                                 color = Color.Gray,
                                 fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    if (hasMore || isLoading) {
+                        Spacer(Modifier.height(12.dp))
+
+                        Button(
+                            onClick = {
+                                loadCallHistory(loadMore = true)
+                            },
+                            enabled = hasMore && !isLoading,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Navy
+                            )
+                        ) {
+                            Text(
+                                if (isLoading) "Loading..."
+                                else "Load More (25)"
                             )
                         }
                     }
@@ -292,9 +339,12 @@ fun CallerProScreen() {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White
+                )
             ) {
                 Column(Modifier.padding(20.dp)) {
+
                     Text(
                         "Recording Library",
                         color = Navy,
@@ -337,6 +387,7 @@ fun CallerProScreen() {
                                         player?.setOnCompletionListener {
                                             message = "Playback completed"
                                         }
+
                                         player?.start()
                                         message = "Playing recording"
                                     } else {
