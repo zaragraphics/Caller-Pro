@@ -63,14 +63,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         // Create Caller Pro's private recording folder.
-        val recordingsFolder = File(
-            filesDir,
-            "Caller Pro/Recordings"
-        )
-
-        if (!recordingsFolder.exists()) {
-            recordingsFolder.mkdirs()
-        }
+        RecordingStorage.getRecordingsFolder(this)
 
         window.statusBarColor =
             android.graphics.Color.rgb(0, 17, 61)
