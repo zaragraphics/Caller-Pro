@@ -1,4 +1,4 @@
-plugins {
+8plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -35,4 +35,5 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.10.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+implementation("androidx.core:core-ktx:1.15.0")
 }
