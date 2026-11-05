@@ -45,9 +45,7 @@ data class CallEntry(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            CallerProScreen()
-        }
+        setContent { CallerProScreen() }
     }
 }
 
@@ -87,6 +85,7 @@ fun CallerProScreen() {
         Thread {
             try {
                 val result = mutableListOf<CallEntry>()
+                var moreAvailable = false
 
                 val projection = arrayOf(
                     CallLog.Calls.CACHED_NAME,
@@ -96,67 +95,85 @@ fun CallerProScreen() {
                     CallLog.Calls.DURATION
                 )
 
-                context.contentResolver.query(
+                val cursor = context.contentResolver.query(
                     CallLog.Calls.CONTENT_URI,
                     projection,
                     null,
                     null,
-                    "${CallLog.Calls.DATE} DESC LIMIT 25 OFFSET $offset"
-                )?.use { cursor ->
+                    "${CallLog.Calls.DATE} DESC"
+                )
 
+                if (cursor == null) {
+                    throw Exception("Call history provider returned no data")
+                }
+
+                cursor.use {
                     val nameIndex =
-                        cursor.getColumnIndex(CallLog.Calls.CACHED_NAME)
+                        it.getColumnIndex(CallLog.Calls.CACHED_NAME)
                     val numberIndex =
-                        cursor.getColumnIndex(CallLog.Calls.NUMBER)
+                        it.getColumnIndex(CallLog.Calls.NUMBER)
                     val typeIndex =
-                        cursor.getColumnIndex(CallLog.Calls.TYPE)
+                        it.getColumnIndex(CallLog.Calls.TYPE)
                     val dateIndex =
-                        cursor.getColumnIndex(CallLog.Calls.DATE)
+                        it.getColumnIndex(CallLog.Calls.DATE)
                     val durationIndex =
-                        cursor.getColumnIndex(CallLog.Calls.DURATION)
+                        it.getColumnIndex(CallLog.Calls.DURATION)
 
-                    while (cursor.moveToNext()) {
-                        val savedName =
-                            if (nameIndex >= 0) cursor.getString(nameIndex)
-                            else null
+                    if (nameIndex < 0 || numberIndex < 0 ||
+                        typeIndex < 0 || dateIndex < 0 ||
+                        durationIndex < 0
+                    ) {
+                        throw Exception("Required call-log columns are unavailable")
+                    }
 
-                        val number =
-                            if (numberIndex >= 0) cursor.getString(numberIndex)
-                            else null
+                    if (it.moveToPosition(offset)) {
+                        var count = 0
 
-                        val type = when (cursor.getInt(typeIndex)) {
-                            CallLog.Calls.INCOMING_TYPE -> "Incoming"
-                            CallLog.Calls.OUTGOING_TYPE -> "Outgoing"
-                            CallLog.Calls.MISSED_TYPE -> "Missed"
-                            CallLog.Calls.REJECTED_TYPE -> "Rejected"
-                            else -> "Other"
-                        }
+                        do {
+                            if (count >= 25) {
+                                moreAvailable = true
+                                break
+                            }
 
-                        val dateValue = cursor.getLong(dateIndex)
-                        val durationValue = cursor.getLong(durationIndex)
+                            val savedName = it.getString(nameIndex)
+                            val number = it.getString(numberIndex)
 
-                        val formattedDate = SimpleDateFormat(
-                            "dd MMM yyyy, hh:mm a",
-                            Locale.getDefault()
-                        ).format(Date(dateValue))
+                            val type = when (it.getInt(typeIndex)) {
+                                CallLog.Calls.INCOMING_TYPE -> "Incoming"
+                                CallLog.Calls.OUTGOING_TYPE -> "Outgoing"
+                                CallLog.Calls.MISSED_TYPE -> "Missed"
+                                CallLog.Calls.REJECTED_TYPE -> "Rejected"
+                                else -> "Other"
+                            }
 
-                        result.add(
-                            CallEntry(
-                                name = savedName?.takeIf {
-                                    it.isNotBlank()
-                                } ?: "Unknown caller",
-                                number = number ?: "Unknown number",
-                                type = type,
-                                date = formattedDate,
-                                duration = "${durationValue / 60} min ${durationValue % 60} sec"
+                            val dateValue = it.getLong(dateIndex)
+                            val durationValue = it.getLong(durationIndex)
+
+                            val formattedDate = SimpleDateFormat(
+                                "dd MMM yyyy, hh:mm a",
+                                Locale.getDefault()
+                            ).format(Date(dateValue))
+
+                            result.add(
+                                CallEntry(
+                                    name = savedName?.takeIf {
+                                        it.isNotBlank()
+                                    } ?: "Unknown caller",
+                                    number = number ?: "Unknown number",
+                                    type = type,
+                                    date = formattedDate,
+                                    duration = "${durationValue / 60} min ${durationValue % 60} sec"
+                                )
                             )
-                        )
+
+                            count++
+                        } while (it.moveToNext())
                     }
                 }
 
                 Handler(Looper.getMainLooper()).post {
                     calls = if (loadMore) calls + result else result
-                    hasMore = result.size == 25
+                    hasMore = moreAvailable
                     isLoading = false
 
                     callMessage = if (calls.isEmpty()) {
@@ -166,10 +183,15 @@ fun CallerProScreen() {
                     }
                 }
 
+            } catch (e: SecurityException) {
+                Handler(Looper.getMainLooper()).post {
+                    isLoading = false
+                    callMessage = "Permission error: ${e.message ?: "Access denied"}"
+                }
             } catch (e: Exception) {
                 Handler(Looper.getMainLooper()).post {
                     isLoading = false
-                    callMessage = "Unable to load calls. Please try again."
+                    callMessage = "Error: ${e.message ?: e.javaClass.simpleName}"
                 }
             }
         }.start()
@@ -181,14 +203,12 @@ fun CallerProScreen() {
         permissionGranted = granted
 
         if (granted) {
-            callMessage = "Permission granted. Loading calls..."
             loadCallHistory()
         } else {
-            callMessage = "Call History permission is required. Tap Refresh to try again."
+            callMessage = "Call History permission denied. Please allow it in App Settings."
         }
     }
 
-    // Ask for permission automatically when the app opens.
     LaunchedEffect(Unit) {
         if (permissionGranted) {
             loadCallHistory()
@@ -217,9 +237,7 @@ fun CallerProScreen() {
     }
 
     DisposableEffect(Unit) {
-        onDispose {
-            player?.release()
-        }
+        onDispose { player?.release() }
     }
 
     MaterialTheme {
@@ -384,7 +402,6 @@ fun CallerProScreen() {
                                         player?.setOnCompletionListener {
                                             message = "Playback completed"
                                         }
-
                                         player?.start()
                                         message = "Playing recording"
                                     } else {
