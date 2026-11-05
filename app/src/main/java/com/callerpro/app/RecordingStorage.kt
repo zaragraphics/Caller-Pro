@@ -31,21 +31,15 @@ object RecordingStorage {
     fun scanAudioFiles(context: Context): List<File> {
         val folder = getRecordingsFolder(context) ?: return emptyList()
 
-        val supportedExtensions = setOf(
-            "m4a",
-            "mp3",
-            "aac",
-            "wav",
-            "3gp",
-            "amr",
-            "ogg",
-            "opus"
+        val extensions = setOf(
+            "m4a", "mp3", "aac", "wav",
+            "3gp", "amr", "ogg", "opus"
         )
 
         return folder.listFiles()
-            ?.filter { file ->
-                file.isFile &&
-                file.extension.lowercase() in supportedExtensions
+            ?.filter {
+                it.isFile &&
+                it.extension.lowercase() in extensions
             }
             ?.sortedByDescending { it.lastModified() }
             ?: emptyList()
