@@ -8,7 +8,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.CallLog
 
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -242,7 +241,7 @@ fun CallerProScreen() {
     }
 
     fun loadCallHistory(loadMore: Boolean = false) {
-        if (!permissionGranted || isLoading) return
+        if (isLoading) return
 
         if (!loadMore) {
             calls = emptyList()
@@ -250,105 +249,70 @@ fun CallerProScreen() {
         }
 
         val offset = if (loadMore) calls.size else 0
+        val canReadPhoneLog = permissionGranted
 
         isLoading = true
-        callMessage = "Loading calls..."
+        callMessage = "Loading saved calls..."
 
         Thread {
             try {
-                val result = mutableListOf<CallEntry>()
-                var moreAvailable = false
+                var syncError: String? = null
 
-                val projection = arrayOf(
-                    CallLog.Calls.CACHED_NAME,
-                    CallLog.Calls.NUMBER,
-                    CallLog.Calls.TYPE,
-                    CallLog.Calls.DATE,
-                    CallLog.Calls.DURATION
+                // Import currently available phone call-log entries.
+                // Previously imported records remain in Caller Pro's database.
+                if (canReadPhoneLog) {
+                    val syncResult =
+                        CallHistorySync.syncFromPhoneCallLog(context)
+                    syncError = syncResult.errorMessage
+                }
+
+                val database =
+                    CallHistoryDatabase.getInstance(context)
+
+                // Fetch one extra row to determine whether another page exists.
+                val storedRecords =
+                    database.getCalls(offset, 26)
+
+                val moreAvailable = storedRecords.size > 25
+                val pageRecords = storedRecords.take(25)
+
+                val dateFormatter = SimpleDateFormat(
+                    "dd MMM yyyy, hh:mm a",
+                    Locale.getDefault()
                 )
 
-                val cursor = context.contentResolver.query(
-                    CallLog.Calls.CONTENT_URI,
-                    projection,
-                    null,
-                    null,
-                    "${CallLog.Calls.DATE} DESC"
-                ) ?: throw Exception("Call history unavailable")
-
-                cursor.use {
-                    val nameIndex = it.getColumnIndex(CallLog.Calls.CACHED_NAME)
-                    val numberIndex = it.getColumnIndex(CallLog.Calls.NUMBER)
-                    val typeIndex = it.getColumnIndex(CallLog.Calls.TYPE)
-                    val dateIndex = it.getColumnIndex(CallLog.Calls.DATE)
-                    val durationIndex = it.getColumnIndex(CallLog.Calls.DURATION)
-
-                    if (
-                        nameIndex < 0 || numberIndex < 0 ||
-                        typeIndex < 0 || dateIndex < 0 ||
-                        durationIndex < 0
-                    ) {
-                        throw Exception("Call-log data unavailable")
-                    }
-
-                    if (it.moveToPosition(offset)) {
-                        var count = 0
-
-                        do {
-                            if (count >= 25) {
-                                moreAvailable = true
-                                break
-                            }
-
-                            val savedName = it.getString(nameIndex)
-                            val number = it.getString(numberIndex)
-
-                            val type = when (it.getInt(typeIndex)) {
-                                CallLog.Calls.INCOMING_TYPE -> "Incoming"
-                                CallLog.Calls.OUTGOING_TYPE -> "Outgoing"
-                                CallLog.Calls.MISSED_TYPE -> "Missed"
-                                CallLog.Calls.REJECTED_TYPE -> "Rejected"
-                                else -> "Other"
-                            }
-
-                            val dateValue = it.getLong(dateIndex)
-                            val durationValue = it.getLong(durationIndex)
-
-                            val formattedDate = SimpleDateFormat(
-                                "dd MMM yyyy, hh:mm a",
-                                Locale.getDefault()
-                            ).format(Date(dateValue))
-
-                            result.add(
-                                CallEntry(
-                                    name = savedName?.takeIf {
-                                        it.isNotBlank()
-                                    } ?: "Unknown caller",
-                                    number = number ?: "Unknown number",
-                                    type = type,
-                                    date = formattedDate,
-                                    duration = "${durationValue / 60} min ${durationValue % 60} sec"
-                                )
-                            )
-
-                            count++
-                        } while (it.moveToNext())
-                    }
+                val result = pageRecords.map { record ->
+                    CallEntry(
+                        name = record.name,
+                        number = record.number,
+                        type = record.type,
+                        date = dateFormatter.format(Date(record.dateMillis)),
+                        duration =
+                            "${record.durationSeconds / 60} min ${record.durationSeconds % 60} sec"
+                    )
                 }
 
                 Handler(Looper.getMainLooper()).post {
                     calls = if (loadMore) calls + result else result
                     hasMore = moreAvailable
                     isLoading = false
-                    callMessage = if (calls.isEmpty()) {
-                        "No call history found"
-                    } else {
-                        "Showing ${calls.size} calls"
+
+                    callMessage = when {
+                        calls.isNotEmpty() ->
+                            "Showing ${calls.size} saved calls"
+                        !canReadPhoneLog ->
+                            "No saved calls yet. Allow Call Logs access to import."
+                        syncError != null ->
+                            syncError
+                        else ->
+                            "No call history found"
                     }
                 }
             } catch (_: Exception) {
                 Handler(Looper.getMainLooper()).post {
                     isLoading = false
-                    callMessage = "Unable to load calls. Please try again."
+                    callMessage =
+                        "Unable to load saved calls. Please try again."
                 }
             }
         }.start()
@@ -362,7 +326,8 @@ fun CallerProScreen() {
         if (granted) {
             loadCallHistory()
         } else {
-            callMessage = "Permission denied. Allow Call Logs access in App Settings."
+            // Keep showing any call history already saved in Caller Pro.
+            loadCallHistory()
         }
     }
 
