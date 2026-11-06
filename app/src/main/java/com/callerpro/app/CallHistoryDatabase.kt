@@ -1,4 +1,3 @@
-
 package com.callerpro.app
 
 import android.content.ContentValues
@@ -89,17 +88,43 @@ class CallHistoryDatabase private constructor(
         oldVersion: Int,
         newVersion: Int
     ) {
-        // Future database upgrades will be handled here.
-        // Existing call history must not be deleted.
+        // Preserve existing history during future database upgrades.
     }
 
-    /**
-     * Saves a call independently of the phone dialer's call log.
-     * If the same source call-log entry is imported again,
-     * the existing database entry is updated instead of duplicated.
-     */
     @Synchronized
     fun saveCall(record: CallHistoryRecord): Long {
+        val db = writableDatabase
+
+        if (record.sourceCallLogId != null) {
+            val existingId = findIdBySourceCallLogId(
+                db,
+                record.sourceCallLogId
+            )
+
+            if (existingId != null) {
+                val values = ContentValues().apply {
+                    put(COL_NAME, record.name)
+                    put(COL_NUMBER, record.number)
+                    put(COL_TYPE, record.type)
+                    put(COL_DATE, record.dateMillis)
+                    put(COL_DURATION, record.durationSeconds)
+
+                    // Do not erase an already linked recording when syncing.
+                    if (record.recordingFileName != null) {
+                        put(COL_RECORDING, record.recordingFileName)
+                    }
+                }
+
+                db.update(
+                    TABLE_CALLS,
+                    values,
+                    "$COL_ID = ?",
+                    arrayOf(existingId.toString())
+                )
+                return existingId
+            }
+        }
+
         val values = ContentValues().apply {
             put(COL_NAME, record.name)
             put(COL_NUMBER, record.number)
@@ -113,38 +138,39 @@ class CallHistoryDatabase private constructor(
             }
         }
 
-        val db = writableDatabase
-
-        val result = db.insertWithOnConflict(
-            TABLE_CALLS,
-            null,
-            values,
-            SQLiteDatabase.CONFLICT_REPLACE
-        )
-
-        return result
+        return db.insert(TABLE_CALLS, null, values)
     }
 
-    /**
-     * Returns saved calls, newest first.
-     */
+    private fun findIdBySourceCallLogId(
+        db: SQLiteDatabase,
+        sourceCallLogId: Long
+    ): Long? {
+        db.query(
+            TABLE_CALLS,
+            arrayOf(COL_ID),
+            "$COL_SOURCE_ID = ?",
+            arrayOf(sourceCallLogId.toString()),
+            null,
+            null,
+            null,
+            "1"
+        ).use { cursor ->
+            return if (cursor.moveToFirst()) cursor.getLong(0) else null
+        }
+    }
+
     @Synchronized
     fun getAllCalls(): List<CallHistoryRecord> {
         return getCalls(0, Int.MAX_VALUE)
     }
 
-    /**
-     * Returns a page of saved calls.
-     */
     @Synchronized
     fun getCalls(
         offset: Int,
         limit: Int
     ): List<CallHistoryRecord> {
-
         val safeOffset = offset.coerceAtLeast(0)
         val safeLimit = limit.coerceAtLeast(1)
-
         val result = mutableListOf<CallHistoryRecord>()
 
         readableDatabase.query(
@@ -157,34 +183,34 @@ class CallHistoryDatabase private constructor(
             "$COL_DATE DESC",
             "$safeLimit OFFSET $safeOffset"
         ).use { cursor ->
-
             val idIndex = cursor.getColumnIndexOrThrow(COL_ID)
-            val sourceIndex =
-                cursor.getColumnIndexOrThrow(COL_SOURCE_ID)
+            val sourceIndex = cursor.getColumnIndexOrThrow(COL_SOURCE_ID)
             val nameIndex = cursor.getColumnIndexOrThrow(COL_NAME)
             val numberIndex = cursor.getColumnIndexOrThrow(COL_NUMBER)
             val typeIndex = cursor.getColumnIndexOrThrow(COL_TYPE)
             val dateIndex = cursor.getColumnIndexOrThrow(COL_DATE)
-            val durationIndex =
-                cursor.getColumnIndexOrThrow(COL_DURATION)
-            val recordingIndex =
-                cursor.getColumnIndexOrThrow(COL_RECORDING)
+            val durationIndex = cursor.getColumnIndexOrThrow(COL_DURATION)
+            val recordingIndex = cursor.getColumnIndexOrThrow(COL_RECORDING)
 
             while (cursor.moveToNext()) {
                 result.add(
                     CallHistoryRecord(
                         id = cursor.getLong(idIndex),
-                        sourceCallLogId =
-                            if (cursor.isNull(sourceIndex)) null
-                            else cursor.getLong(sourceIndex),
+                        sourceCallLogId = if (cursor.isNull(sourceIndex)) {
+                            null
+                        } else {
+                            cursor.getLong(sourceIndex)
+                        },
                         name = cursor.getString(nameIndex),
                         number = cursor.getString(numberIndex),
                         type = cursor.getString(typeIndex),
                         dateMillis = cursor.getLong(dateIndex),
                         durationSeconds = cursor.getLong(durationIndex),
-                        recordingFileName =
-                            if (cursor.isNull(recordingIndex)) null
-                            else cursor.getString(recordingIndex)
+                        recordingFileName = if (cursor.isNull(recordingIndex)) {
+                            null
+                        } else {
+                            cursor.getString(recordingIndex)
+                        }
                     )
                 )
             }
@@ -193,9 +219,6 @@ class CallHistoryDatabase private constructor(
         return result
     }
 
-    /**
-     * Updates the recording filename associated with a saved call.
-     */
     @Synchronized
     fun linkRecording(
         callId: Long,
@@ -213,36 +236,48 @@ class CallHistoryDatabase private constructor(
         ) > 0
     }
 
-    /**
-     * Finds a saved call by its database ID.
-     */
+    @Synchronized
+    fun linkRecordingToNearestCall(
+        callDateMillis: Long,
+        recordingFileName: String,
+        maxDifferenceMillis: Long = 10 * 60 * 1000L
+    ): Boolean {
+        val nearestCallId = readableDatabase.rawQuery(
+            """
+            SELECT $COL_ID
+            FROM $TABLE_CALLS
+            WHERE ABS($COL_DATE - ?) <= ?
+            ORDER BY ABS($COL_DATE - ?) ASC
+            LIMIT 1
+            """.trimIndent(),
+            arrayOf(
+                callDateMillis.toString(),
+                maxDifferenceMillis.toString(),
+                callDateMillis.toString()
+            )
+        ).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getLong(0) else null
+        } ?: return false
+
+        return linkRecording(nearestCallId, recordingFileName)
+    }
+
     @Synchronized
     fun getCallById(callId: Long): CallHistoryRecord? {
         return getCalls(0, Int.MAX_VALUE)
             .firstOrNull { it.id == callId }
     }
 
-    /**
-     * Returns the total number of independently saved calls.
-     */
     @Synchronized
     fun getCallCount(): Int {
         readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM $TABLE_CALLS",
             null
         ).use { cursor ->
-            return if (cursor.moveToFirst()) {
-                cursor.getInt(0)
-            } else {
-                0
-            }
+            return if (cursor.moveToFirst()) cursor.getInt(0) else 0
         }
     }
 
-    /**
-     * Deletes only the selected Caller Pro history entry.
-     * It does not delete the phone dialer's call log.
-     */
     @Synchronized
     fun deleteCall(callId: Long): Boolean {
         return writableDatabase.delete(
@@ -252,4 +287,3 @@ class CallHistoryDatabase private constructor(
         ) > 0
     }
 }
-
