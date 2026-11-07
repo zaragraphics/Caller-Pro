@@ -27,11 +27,11 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Build APK
+        run: gradle assembleDebug --stacktrace
+
       - name: Show Android SHA-1 fingerprint
         run: gradle signingReport
-
-      - name: Build APK
-        run: gradle assembleDebug --stacktrace --info
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
