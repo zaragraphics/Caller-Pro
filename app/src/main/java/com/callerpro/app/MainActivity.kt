@@ -653,49 +653,55 @@ fun AccountScreen() {
         activity?.let { GoogleAuthManager(it) }
     }
 
-    val signInLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.StartActivityForResult()
-        ) { result ->
-            loading = false
+    
+val signInLauncher =
+    rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        loading = false
 
-            if (result.resultCode == Activity.RESULT_OK) {
-                try {
-                    authManager?.handleSignInResult(result.data)
-                        ?.addOnCompleteListener { task ->
-                            if (task.isSuccessful) {
-    val signedInUser = FirebaseAuth.getInstance().currentUser
+        try {
+            val manager = authManager
 
-    if (signedInUser != null) {
-        UserProfileRepository.saveUserProfile(
-            user = signedInUser,
-            onSuccess = {
-                user = FirebaseAuth.getInstance().currentUser
-                message = "Google sign-in successful. Profile saved."
-            },
-            onError = { error ->
-                user = FirebaseAuth.getInstance().currentUser
-                message = "Signed in, but profile saving failed: $error"
-            }
-        )
-    } else {
-        message = "Sign-in completed, but user details were unavailable."
-    }
-} else {
-    message = task.exception?.localizedMessage
-        ?: "Sign-in failed. Please try again."
-}
-                        }
-                } catch (e: Exception) {
-                    message = e.localizedMessage
-                        ?: "Unable to complete Google sign-in."
-                }
+            if (manager == null) {
+                message = "Google Sign-In is unavailable."
             } else {
-                message = "Google sign-in cancelled."
-            }
-        }
+                manager.handleSignInResult(result.data)
+                    .addOnCompleteListener { task ->
 
-    Column(Modifier.fillMaxSize()) {
+                        if (task.isSuccessful) {
+                            val signedInUser =
+                                FirebaseAuth.getInstance().currentUser
+
+                            if (signedInUser != null) {
+                                UserProfileRepository.saveUserProfile(
+                                    user = signedInUser,
+                                    onSuccess = {
+                                        user = FirebaseAuth.getInstance().currentUser
+                                        message = "Google sign-in successful. Profile saved."
+                                    },
+                                    onError = { error ->
+                                        user = FirebaseAuth.getInstance().currentUser
+                                        message = "Profile saving failed: $error"
+                                    }
+                                )
+                            } else {
+                                message = "User details unavailable."
+                            }
+                        } else {
+                            message = "Authentication failed: ${
+                                task.exception?.localizedMessage ?: "Unknown error"
+                            }"
+                        }
+                    }
+            }
+        } catch (e: Exception) {
+            message = "Google Sign-In error: ${
+                e.localizedMessage ?: e.javaClass.simpleName
+            }"
+        }
+    }
+
         PurpleHeader(
             "My Account",
             "Your Caller Pro profile"
