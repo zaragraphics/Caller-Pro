@@ -664,12 +664,27 @@ fun AccountScreen() {
                     authManager?.handleSignInResult(result.data)
                         ?.addOnCompleteListener { task ->
                             if (task.isSuccessful) {
-                                user = FirebaseAuth.getInstance().currentUser
-                                message = "Google sign-in successful."
-                            } else {
-                                message = task.exception?.localizedMessage
-                                    ?: "Sign-in failed. Please try again."
-                            }
+    val signedInUser = FirebaseAuth.getInstance().currentUser
+
+    if (signedInUser != null) {
+        UserProfileRepository.saveUserProfile(
+            user = signedInUser,
+            onSuccess = {
+                user = FirebaseAuth.getInstance().currentUser
+                message = "Google sign-in successful. Profile saved."
+            },
+            onError = { error ->
+                user = FirebaseAuth.getInstance().currentUser
+                message = "Signed in, but profile saving failed: $error"
+            }
+        )
+    } else {
+        message = "Sign-in completed, but user details were unavailable."
+    }
+} else {
+    message = task.exception?.localizedMessage
+        ?: "Sign-in failed. Please try again."
+}
                         }
                 } catch (e: Exception) {
                     message = e.localizedMessage
