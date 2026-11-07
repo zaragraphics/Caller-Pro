@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "504620348584",
+    "project_id": "caller-pro-c747f",
+    "storage_bucket": "caller-pro-c747f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:504620348584:android:a39b048f85d3a9c9f63e9d",
+        "android_client_info": {
+          "package_name": "com.callerpro.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAtHbNGByKckMm6INDI74SGP7IDl6vDN_4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
