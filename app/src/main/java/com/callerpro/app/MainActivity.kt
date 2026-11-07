@@ -700,6 +700,7 @@ val signInLauncher =
             }"
         }
     }
+}
 
         PurpleHeader(
             "My Account",
