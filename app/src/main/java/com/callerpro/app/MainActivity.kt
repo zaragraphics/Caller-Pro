@@ -435,6 +435,11 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
     var respondingInvitation by remember { mutableStateOf<String?>(null) }
     var membersByGroup by remember { mutableStateOf<Map<String, List<FamilyMemberItem>>>(emptyMap()) }
     var loadingMembersByGroup by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var consentGroup by remember { mutableStateOf<FamilyGroupItem?>(null) }
+    var allowCallDetails by remember { mutableStateOf(false) }
+    var allowRecordingDetails by remember { mutableStateOf(false) }
+    var allowSmsDetails by remember { mutableStateOf(false) }
+    var savingConsent by remember { mutableStateOf(false) }
 
     fun loadInvitations() {
         val email = user?.email?.trim()?.lowercase(Locale.ROOT)
@@ -507,9 +512,13 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                 respondingInvitation = null
                 invitations = invitations.filterNot { it.invitationId == invitation.invitationId }
                 if (accept) {
-                    onNotice("Invitation accepted. You are now a Member of ${invitation.groupName}.")
-                    groups = (groups + FamilyGroupItem(invitation.groupId, invitation.groupName, "Member"))
-                        .distinctBy { it.groupId }
+                    onNotice("Invitation accepted. Please review your family data-sharing permissions.")
+                    val acceptedGroup = FamilyGroupItem(invitation.groupId, invitation.groupName, "Member")
+                    groups = (groups + acceptedGroup).distinctBy { it.groupId }
+                    allowCallDetails = false
+                    allowRecordingDetails = false
+                    allowSmsDetails = false
+                    consentGroup = acceptedGroup
                 } else {
                     onNotice("Invitation rejected.")
                 }
@@ -517,6 +526,33 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
             .addOnFailureListener { error ->
                 respondingInvitation = null
                 onNotice("Unable to respond to invitation: ${error.localizedMessage ?: "Please try again."}")
+            }
+    }
+
+    fun saveMemberConsent() {
+        val currentUser = user
+        val group = consentGroup
+        if (currentUser == null || group == null) return
+        savingConsent = true
+        val consentData = hashMapOf<String, Any>(
+            "groupId" to group.groupId,
+            "userId" to currentUser.uid,
+            "callDetails" to allowCallDetails,
+            "recordingDetails" to allowRecordingDetails,
+            "smsDetails" to allowSmsDetails,
+            "consentVersion" to 1,
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        db.collection("consents").document("${group.groupId}_${currentUser.uid}")
+            .set(consentData)
+            .addOnSuccessListener {
+                savingConsent = false
+                consentGroup = null
+                onNotice("Your sharing permissions have been saved. You can change them later.")
+            }
+            .addOnFailureListener { error ->
+                savingConsent = false
+                onNotice("Unable to save permissions: ${error.localizedMessage ?: "Please try again."}")
             }
     }
 
@@ -1180,6 +1216,58 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                 }
             }
         }
+    }
+
+    consentGroup?.let { group ->
+        AlertDialog(
+            onDismissRequest = { /* Consent must be explicitly saved; keep this screen open. */ },
+            title = { Text("Family Data Sharing Permissions", color = AppText, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "You joined ${group.name}. Choose what this group's Admin may access. All options are optional.",
+                        color = MutedText,
+                        fontSize = 13.sp
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Call Details", color = AppText, fontWeight = FontWeight.SemiBold)
+                            Text("Incoming, outgoing and missed call history", color = MutedText, fontSize = 11.sp)
+                        }
+                        Checkbox(checked = allowCallDetails, onCheckedChange = { allowCallDetails = it })
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Recording Details", color = AppText, fontWeight = FontWeight.SemiBold)
+                            Text("Available recording list and playback", color = MutedText, fontSize = 11.sp)
+                        }
+                        Checkbox(checked = allowRecordingDetails, onCheckedChange = { allowRecordingDetails = it })
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("SMS Details", color = AppText, fontWeight = FontWeight.SemiBold)
+                            Text("SMS history and message details", color = MutedText, fontSize = 11.sp)
+                        }
+                        Checkbox(checked = allowSmsDetails, onCheckedChange = { allowSmsDetails = it })
+                    }
+                    Text(
+                        "You may leave any option turned off. Permission management for changing these choices will be added in a later Family Settings update. Android may not support capturing every call or message.",
+                        color = MutedText,
+                        fontSize = 11.sp
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { saveMemberConsent() },
+                    enabled = !savingConsent,
+                    colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                ) {
+                    if (savingConsent) CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Text("Save Permissions")
+                }
+            }
+        )
     }
 }
 
