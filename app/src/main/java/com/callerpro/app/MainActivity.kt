@@ -154,101 +154,193 @@ fun HomeScreen(
     onNotice: (String) -> Unit
 ) {
     val user = FirebaseAuth.getInstance().currentUser
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().background(AppBackground),
+        contentPadding = PaddingValues(bottom = 26.dp)
+    ) {
         item {
-            PurpleHeader("Caller Pro", "Calls • Family • Secure Backup")
-        }
-        item {
-            Column(
-                Modifier.fillMaxWidth()
-                    .background(Brush.linearGradient(listOf(DeepBlue, Navy, Blue)))
-                    .padding(start = 22.dp, end = 22.dp, bottom = 28.dp)
+            // Compact top bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(DeepBlue)
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Welcome back", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp)
-                Spacer(Modifier.height(5.dp))
-                Text(
-                    user?.displayName ?: "Welcome to Caller Pro",
-                    color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold
-                )
-                Text(
-                    user?.email ?: "Sign in to connect your family",
-                    color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp
-                )
-                Spacer(Modifier.height(20.dp))
-                Card(
-                    Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.White.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.People, null, tint = Blue,
-                            modifier = Modifier.size(36.dp)
-                        )
-                        Spacer(Modifier.width(14.dp))
+                    Icon(Icons.Default.Call, null, tint = Cyan, modifier = Modifier.size(23.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("CALLER PRO", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text("Your personal call companion", color = Color.White.copy(alpha = 0.68f), fontSize = 11.sp)
+                }
+                IconButton(onClick = { onNotice("Notifications will be available in a future update.") }) {
+                    Icon(Icons.Default.Notifications, "Notifications", tint = Color.White)
+                }
+            }
+        }
+
+        item {
+            // Main welcome hero inspired by the supplied blue interface reference
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(DeepBlue)
+                    .padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 28.dp)
+            ) {
+                Text(
+                    "WELCOME BACK",
+                    color = Cyan,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Hello ${user?.displayName?.substringBefore(" ") ?: "there"},
+how can I help
+you today?",
+                    color = Color.White,
+                    fontSize = 30.sp,
+                    lineHeight = 35.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    user?.email ?: "Connect your account to use family and cloud features.",
+                    color = Color.White.copy(alpha = 0.72f),
+                    fontSize = 12.sp
+                )
+                Spacer(Modifier.height(22.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF12366D))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 15.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(Cyan.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Groups, null, tint = Cyan, modifier = Modifier.size(25.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("My Family", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = AppText)
-                            Text("Manage your family group", fontSize = 12.sp, color = MutedText)
+                            Text("Your Family Space", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text("Manage your trusted family group", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
                         }
                         IconButton(onClick = onOpenFamily) {
-                            Icon(Icons.Default.ChevronRight, null, tint = Blue)
+                            Icon(Icons.Default.ArrowForward, null, tint = Cyan)
                         }
                     }
                 }
             }
         }
+
         item {
-            Column(Modifier.padding(18.dp)) {
-                Text("Quick Access", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = AppText)
-                Spacer(Modifier.height(13.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    QuickCard("Call Logs", Icons.Default.Call, Modifier.weight(1f)) { onOpenActivity() }
-                    QuickCard("Recordings", Icons.Default.Mic, Modifier.weight(1f)) {
+            Column(Modifier.padding(horizontal = 18.dp, vertical = 22.dp)) {
+                Text("Quick Access", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AppText)
+                Text("Choose what you want to open", fontSize = 12.sp, color = MutedText)
+                Spacer(Modifier.height(15.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HomeActionCard(
+                        title = "Call Activity",
+                        description = "View call history",
+                        icon = Icons.Default.Call,
+                        modifier = Modifier.weight(1f)
+                    ) { onOpenActivity() }
+
+                    HomeActionCard(
+                        title = "Recordings",
+                        description = "Your audio files",
+                        icon = Icons.Default.Mic,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         onNotice("Recording library will be connected in the next development step.")
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    QuickCard("SMS Logs", Icons.Default.Message, Modifier.weight(1f)) {
+
+                Spacer(Modifier.height(12.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HomeActionCard(
+                        title = "SMS Logs",
+                        description = "Message activity",
+                        icon = Icons.Default.Message,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         onNotice("SMS access will only be implemented where Android permissions and policies allow.")
                     }
-                    QuickCard("Backup", Icons.Default.CloudUpload, Modifier.weight(1f)) {
-                        onNotice("Cloud backup setup is coming next.")
+
+                    HomeActionCard(
+                        title = "Cloud Backup",
+                        description = "Protect your data",
+                        icon = Icons.Default.CloudUpload,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        onOpenAccount()
                     }
                 }
-                Spacer(Modifier.height(22.dp))
-                Text("Cloud Backup", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = AppText)
-                Spacer(Modifier.height(10.dp))
+
+                Spacer(Modifier.height(24.dp))
+                Text("Account & Security", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = AppText)
+                Spacer(Modifier.height(11.dp))
+
                 Card(
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = PaleBlue),
-                    modifier = Modifier.fillMaxWidth()
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
                 ) {
-                    Row(Modifier.padding(17.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Cloud, null, tint = Blue, modifier = Modifier.size(38.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Security, null, tint = Blue, modifier = Modifier.size(30.dp))
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Backup not configured", fontWeight = FontWeight.Bold, color = AppText)
-                            Text("Connect your account to continue", color = MutedText, fontSize = 12.sp)
+                            Text("Privacy & Consent", color = AppText, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("You control what is shared with family", color = MutedText, fontSize = 11.sp)
                         }
-                        TextButton(onClick = onOpenAccount) { Text("Connect") }
+                        Icon(Icons.Default.ChevronRight, null, tint = MutedText)
                     }
                 }
-                Spacer(Modifier.height(22.dp))
-                Text("Privacy & Consent", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = AppText)
-                Spacer(Modifier.height(10.dp))
+
+                Spacer(Modifier.height(12.dp))
                 Card(
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    modifier = Modifier.fillMaxWidth()
+                    colors = CardDefaults.cardColors(containerColor = PaleBlue)
                 ) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Security, null, tint = Blue, modifier = Modifier.size(32.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Cloud, null, tint = Blue, modifier = Modifier.size(30.dp))
                         Spacer(Modifier.width(12.dp))
-                        Text(
-                            "Family data is shared only with the member's explicit consent. Members can review or revoke sharing.",
-                            color = AppText, fontSize = 13.sp
-                        )
+                        Column(Modifier.weight(1f)) {
+                            Text("Backup status", color = AppText, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Cloud backup is not configured yet", color = MutedText, fontSize = 11.sp)
+                        }
+                        TextButton(onClick = onOpenAccount) {
+                            Text("Set up", color = Blue, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -257,22 +349,38 @@ fun HomeScreen(
 }
 
 @Composable
-fun QuickCard(title: String, icon: ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun HomeActionCard(
+    title: String,
+    description: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     Card(
         onClick = onClick,
-        modifier = modifier.height(112.dp),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(2.dp)
+        modifier = modifier.height(142.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0C1D3B)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
     ) {
         Column(
-            Modifier.fillMaxSize().padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            modifier = Modifier.fillMaxSize().padding(15.dp),
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Icon(icon, null, tint = Blue, modifier = Modifier.size(29.dp))
-            Spacer(Modifier.height(8.dp))
-            Text(title, color = AppText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Cyan.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, null, tint = Cyan, modifier = Modifier.size(21.dp))
+            }
+            Column {
+                Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(3.dp))
+                Text(description, color = Color.White.copy(alpha = 0.65f), fontSize = 10.sp)
+            }
         }
     }
 }
