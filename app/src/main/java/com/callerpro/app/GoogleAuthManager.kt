@@ -1,8 +1,8 @@
-
 package com.callerpro.app
 
 import android.app.Activity
 import android.content.Intent
+import android.util.Log
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
@@ -35,18 +35,45 @@ class GoogleAuthManager(private val activity: Activity) {
     }
 
     fun handleSignInResult(data: Intent?): Task<AuthResult> {
+        Log.d(TAG, "Google account result received")
+
         val accountTask =
             GoogleSignIn.getSignedInAccountFromIntent(data)
 
-        val account: GoogleSignInAccount =
+        val account: GoogleSignInAccount = try {
             accountTask.getResult(ApiException::class.java)
+        } catch (e: ApiException) {
+            Log.e(
+                TAG,
+                "GOOGLE_ACCOUNT_RESULT_FAILED: statusCode=${e.statusCode}, statusMessage=${e.statusMessage}",
+                e
+            )
+            throw IllegalStateException(
+                "Google account selection failed. " +
+                    "Status code: ${e.statusCode}; " +
+                    "Status message: ${e.statusMessage ?: "Not provided"}",
+                e
+            )
+        }
+
+        val idToken = account.idToken
+        if (idToken.isNullOrBlank()) {
+            Log.e(TAG, "GOOGLE_ACCOUNT_RESULT_FAILED: ID token is null or blank")
+            throw IllegalStateException(
+                "Google account was selected, but Google returned no ID token."
+            )
+        }
+
+        Log.d(TAG, "Google account result succeeded; starting Firebase credential sign-in")
 
         val credential = GoogleAuthProvider.getCredential(
-            account.idToken,
+            idToken,
             null
         )
 
-        return firebaseAuth.signInWithCredential(credential)
+        return firebaseAuth.signInWithCredential(credential).addOnFailureListener { error ->
+            Log.e(TAG, "FIREBASE_CREDENTIAL_SIGN_IN_FAILED", error)
+        }
     }
 
     fun getCurrentUser() = firebaseAuth.currentUser
@@ -56,5 +83,9 @@ class GoogleAuthManager(private val activity: Activity) {
             firebaseAuth.signOut()
             onComplete()
         }
+    }
+
+    private companion object {
+        const val TAG = "CallerProGoogleAuth"
     }
 }
