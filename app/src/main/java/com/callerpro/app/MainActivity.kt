@@ -1,3 +1,140 @@
+
+yes. registered email showing correctly
+Great! Your registered email is showing correctly. We can now proceed with the Spark-compatible Family Invitation feature.
+
+Step 2 – Prepare the invitation flow
+
+The Admin will enter a member's registered email. Caller Pro will create an invitation in Firestore. When that person logs in using the same email, they will see the invitation and can accept or reject it.
+
+One limitation: on the free Spark plan, we cannot securely verify beforehand whether an arbitrary email is registered or retrieve its Firebase UID. The UID becomes available after the invited person signs in and accepts.
+
+Before coding: We’ll first update Firestore security rules to protect invitations and memberships.
+
+Please confirm: Shall we proceed with this Spark-compatible method?
+
+proceed with this Spark-compatible method
+
+Worked for 15s
+
+
+Perfect. We’ll use the Spark-compatible invitation system and keep your existing Firebase project, caller-pro-c747.
+
+We’ll proceed one step at a time. First, we’ll secure Firestore invitations and membership acceptance. We will not change your working Google Sign-In, Home, Account, Call History, or Family Group creation code in this step.
+
+Step 1 – Update Firestore Security Rules
+
+I’ve prepared the complete rules file. It preserves your existing group-creation permissions and adds controlled invitation access, acceptance, rejection, and cancellation.
+
+CallerPro_Firestore_Invitation_Rules.txt
+
+Complete replacement rules file
+Download Firestore Rules
+
+Open Firebase Console → Firestore Database → Rules.
+
+Copy your current rules into a backup text file.
+
+Replace the rules with the downloaded file.
+
+Click Publish.
+
+Important: Do not change any GitHub files yet.
+
+After publishing, tell me “Rules published”. We’ll then move to the invitation code.
+
+
+CallerPro_Firestore_Invitation_Rules.txt
+Document
+Rules published
+
+Worked for 21s
+Excellent. Firestore rules are published. Step 1 is complete.
+
+Next, we’ll implement invitations directly through Firestore—without Cloud Functions or a Firebase plan upgrade.
+
+One important note: do not deploy the earlier Backend ZIP; it uses the Cloud Functions approach, which is not suitable for your current Spark plan.
+
+I’ll prepare the updated complete MainActivity.kt using your working Family Groups version. The invitation flow will include:
+
+Admin sends an invitation by email.
+
+The invited user sees it after signing in with that email.
+
+The user accepts or rejects.
+
+Accepting creates their Member role in that group.
+
+We’ll keep your existing working features intact.
+
+ok next
+
+Worked for 33s
+Step 2 – Get the latest working app source
+
+I located your GitHub repository and confirmed that its current MainActivity.kt contains the Firebase Family Group creation code.
+
+To avoid overwriting your working features, please:
+
+Open your Caller Pro GitHub repository.
+
+Open app/src/main/java/com/callerpro/app/MainActivity.kt.
+
+Download the file.
+
+Upload that downloaded MainActivity.kt here.
+
+I’ll use it to prepare the complete invitation-enabled TXT file, preserving your existing features. Don't replace anything in GitHub yet.
+
+
+MainActivity(1).kt
+Code
+
+Worked for 1m 27s
+
+
+
+
+
+
+
+I’ve received your latest MainActivity.kt and prepared the invitation-enabled version using that source.
+
+CallerPro_MainActivity_FamilyInvitations_v2.txt
+
+Complete updated Kotlin source · 1,581 lines
+Download updated MainActivity.kt
+
+Features added
+Admin can invite members by email from an Admin group.
+
+Duplicate pending invitation check.
+
+Invitations expire after 7 days.
+
+Invited users can refresh their invitation list.
+
+Accepting creates their Member membership.
+
+Rejecting records their response.
+
+Existing Home, Account, Call History and Family Group creation code is retained.
+
+Your next step
+Download the TXT file.
+
+Open your GitHub repository.
+
+Replace app/src/main/java/com/callerpro/app/MainActivity.kt with this complete source.
+
+Commit the changes.
+
+Don't install an APK yet. First, let GitHub Actions finish building.
+
+Tell me whether the build shows a green tick or a red error. The source has been prepared, but it has not yet been verified by an Android build.
+
+
+CallerPro_MainActivity_FamilyInvitations_v2.txt
+Document
 package com.callerpro.app
 
 import android.Manifest
@@ -398,6 +535,14 @@ private data class FamilyGroupItem(
     val role: String
 )
 
+private data class FamilyInvitationItem(
+    val invitationId: String,
+    val groupId: String,
+    val groupName: String,
+    val inviterName: String,
+    val recipientEmail: String
+)
+
 @Composable
 fun FamilyScreen(onNotice: (String) -> Unit) {
     val user = FirebaseAuth.getInstance().currentUser
@@ -409,6 +554,158 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
     var loadingGroups by remember { mutableStateOf(false) }
     var groups by remember { mutableStateOf<List<FamilyGroupItem>>(emptyList()) }
     var loadError by remember { mutableStateOf<String?>(null) }
+
+    var showInviteDialog by remember { mutableStateOf(false) }
+    var selectedInviteGroup by remember { mutableStateOf<FamilyGroupItem?>(null) }
+    var inviteEmail by remember { mutableStateOf("") }
+    var sendingInvite by remember { mutableStateOf(false) }
+    var invitations by remember { mutableStateOf<List<FamilyInvitationItem>>(emptyList()) }
+    var loadingInvitations by remember { mutableStateOf(false) }
+    var respondingInvitation by remember { mutableStateOf<String?>(null) }
+
+    fun loadInvitations() {
+        val email = user?.email?.trim()?.lowercase(Locale.ROOT)
+        if (email.isNullOrBlank()) {
+            invitations = emptyList()
+            return
+        }
+        loadingInvitations = true
+        db.collection("invitations")
+            .whereEqualTo("recipientEmail", email)
+            .whereEqualTo("status", "pending")
+            .get()
+            .addOnSuccessListener { snapshot ->
+                invitations = snapshot.documents.mapNotNull { doc ->
+                    val expiresAt = doc.getTimestamp("expiresAt")
+                    if (expiresAt != null && expiresAt.toDate().time <= System.currentTimeMillis()) {
+                        null
+                    } else {
+                        FamilyInvitationItem(
+                            invitationId = doc.id,
+                            groupId = doc.getString("groupId").orEmpty(),
+                            groupName = doc.getString("groupName") ?: "Family Group",
+                            inviterName = doc.getString("inviterName") ?: "Family Admin",
+                            recipientEmail = doc.getString("recipientEmail").orEmpty()
+                        )
+                    }
+                }
+                loadingInvitations = false
+            }
+            .addOnFailureListener { error ->
+                loadingInvitations = false
+                onNotice("Unable to load invitations: ${error.localizedMessage ?: "Please try again."}")
+            }
+    }
+
+    fun respondToInvitation(invitation: FamilyInvitationItem, accept: Boolean) {
+        val currentUser = FirebaseAuth.getInstance().currentUser
+        if (currentUser == null || currentUser.email.isNullOrBlank()) {
+            onNotice("Please sign in with the invited Google account to respond.")
+            return
+        }
+        respondingInvitation = invitation.invitationId
+        val invitationRef = db.collection("invitations").document(invitation.invitationId)
+        val batch = db.batch()
+        val response = hashMapOf<String, Any>(
+            "status" to if (accept) "accepted" else "rejected",
+            "acceptedByUid" to currentUser.uid,
+            "respondedAt" to FieldValue.serverTimestamp()
+        )
+        batch.update(invitationRef, response)
+
+        if (accept) {
+            val membershipRef = db.collection("memberships")
+                .document("${invitation.groupId}_${currentUser.uid}")
+            val membershipData = hashMapOf<String, Any>(
+                "groupId" to invitation.groupId,
+                "userId" to currentUser.uid,
+                "role" to "Member",
+                "status" to "active",
+                "createdAt" to FieldValue.serverTimestamp(),
+                "invitationId" to invitation.invitationId
+            )
+            batch.set(membershipRef, membershipData)
+        }
+
+        batch.commit()
+            .addOnSuccessListener {
+                respondingInvitation = null
+                invitations = invitations.filterNot { it.invitationId == invitation.invitationId }
+                if (accept) {
+                    onNotice("Invitation accepted. You are now a Member of ${invitation.groupName}.")
+                    loadGroups()
+                } else {
+                    onNotice("Invitation rejected.")
+                }
+            }
+            .addOnFailureListener { error ->
+                respondingInvitation = null
+                onNotice("Unable to respond to invitation: ${error.localizedMessage ?: "Please try again."}")
+            }
+    }
+
+    fun sendInvitation() {
+        val admin = user
+        val group = selectedInviteGroup
+        val email = inviteEmail.trim().lowercase(Locale.ROOT)
+
+        if (admin == null || admin.email.isNullOrBlank() || group == null) {
+            onNotice("Sign in and select one of your Admin groups.")
+            return
+        }
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+            onNotice("Please enter a valid email address.")
+            return
+        }
+        if (email == admin.email.trim().lowercase(Locale.ROOT)) {
+            onNotice("You cannot invite your own account.")
+            return
+        }
+
+        sendingInvite = true
+        db.collection("invitations")
+            .whereEqualTo("groupId", group.groupId)
+            .whereEqualTo("recipientEmail", email)
+            .whereEqualTo("status", "pending")
+            .get()
+            .addOnSuccessListener { existing ->
+                if (!existing.isEmpty) {
+                    sendingInvite = false
+                    onNotice("A pending invitation already exists for this email.")
+                    return@addOnSuccessListener
+                }
+
+                val invitationRef = db.collection("invitations").document()
+                val invitationData = hashMapOf<String, Any>(
+                    "invitationId" to invitationRef.id,
+                    "groupId" to group.groupId,
+                    "groupName" to group.name,
+                    "inviterUid" to admin.uid,
+                    "inviterName" to (admin.displayName ?: "Family Admin"),
+                    "recipientEmail" to email,
+                    "role" to "Member",
+                    "status" to "pending",
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "expiresAt" to Date(System.currentTimeMillis() + 7L * 24L * 60L * 60L * 1000L)
+                )
+                invitationRef.set(invitationData)
+                    .addOnSuccessListener {
+                        sendingInvite = false
+                        showInviteDialog = false
+                        inviteEmail = ""
+                        selectedInviteGroup = null
+                        onNotice("Invitation sent to $email. It will appear in their Caller Pro app when they sign in with this email.")
+                    }
+                    .addOnFailureListener { error ->
+                        sendingInvite = false
+                        onNotice("Unable to send invitation: ${error.localizedMessage ?: "Please try again."}")
+                    }
+            }
+            .addOnFailureListener { error ->
+                sendingInvite = false
+                onNotice("Unable to check existing invitations: ${error.localizedMessage ?: "Please try again."}")
+            }
+    }
 
     fun loadGroups() {
         val uid = user?.uid
@@ -476,8 +773,9 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
             }
     }
 
-    LaunchedEffect(user?.uid) {
+    LaunchedEffect(user?.uid, user?.email) {
         loadGroups()
+        loadInvitations()
     }
 
     fun createFamilyGroup() {
@@ -591,13 +889,63 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                             Text("Create Family Group")
                         }
                         OutlinedButton(
-                            onClick = { onNotice("Family invitations will be available in the next development step.") },
+                            onClick = { loadInvitations() },
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(14.dp)
                         ) {
                             Icon(Icons.Default.Mail, null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Join with Invitation")
+                            Text("Refresh Invitations")
+                        }
+                    }
+                }
+            }
+
+            item {
+                Text("Family Invitations", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AppText)
+            }
+
+            if (loadingInvitations) {
+                item {
+                    Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Blue)
+                    }
+                }
+            } else if (invitations.isEmpty()) {
+                item {
+                    Text("No pending invitations for ${user?.email ?: "your account"}.", color = MutedText, fontSize = 12.sp)
+                }
+            } else {
+                items(invitations, key = { it.invitationId }) { invitation ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White)
+                    ) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(invitation.groupName, color = AppText, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text("Invited by ${invitation.inviterName}", color = MutedText, fontSize = 12.sp)
+                            Text("Invited email: ${invitation.recipientEmail}", color = MutedText, fontSize = 11.sp)
+                            Spacer(Modifier.height(12.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                OutlinedButton(
+                                    onClick = { respondToInvitation(invitation, false) },
+                                    enabled = respondingInvitation != invitation.invitationId,
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Reject") }
+                                Button(
+                                    onClick = { respondToInvitation(invitation, true) },
+                                    enabled = respondingInvitation != invitation.invitationId,
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                                ) {
+                                    if (respondingInvitation == invitation.invitationId) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                    } else {
+                                        Text("Accept")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -667,6 +1015,21 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                                     )
                                 }
                             }
+                            if (group.role == "Admin") {
+                                Spacer(Modifier.height(12.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        selectedInviteGroup = group
+                                        inviteEmail = ""
+                                        showInviteDialog = true
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.PersonAdd, null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Invite Member")
+                                }
+                            }
                         }
                     }
                 }
@@ -733,6 +1096,47 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                     onClick = { showCreateDialog = false },
                     enabled = !creating
                 ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showInviteDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!sendingInvite) showInviteDialog = false },
+            title = { Text("Invite Family Member") },
+            text = {
+                Column {
+                    Text(
+                        "Send an invitation to join ${selectedInviteGroup?.name ?: "this family group"}. The person must sign in with this exact email address to receive it.",
+                        color = MutedText,
+                        fontSize = 13.sp
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = inviteEmail,
+                        onValueChange = { inviteEmail = it },
+                        label = { Text("Registered email address") },
+                        placeholder = { Text("example@gmail.com") },
+                        singleLine = true,
+                        enabled = !sendingInvite
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("Invitations expire after 7 days.", color = MutedText, fontSize = 11.sp)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { sendInvitation() }, enabled = !sendingInvite && inviteEmail.isNotBlank()) {
+                    if (sendingInvite) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("Send Invitation")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showInviteDialog = false }, enabled = !sendingInvite) {
                     Text("Cancel")
                 }
             }
@@ -1312,3 +1716,8 @@ fun AccountOption(icon: ImageVector, title: String) {
         }
     }
 }
+Your file library is full. New files won't be saved to your library, but you can still use them in this chat. To store new files for later, free up space or upgrade your storage.
+
+
+
+
