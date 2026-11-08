@@ -10,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -400,6 +401,7 @@ private data class FamilyGroupItem(
 )
 
 private data class FamilyMemberItem(
+    val groupId: String,
     val uid: String,
     val name: String,
     val email: String,
@@ -440,6 +442,11 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
     var allowRecordingDetails by remember { mutableStateOf(false) }
     var allowSmsDetails by remember { mutableStateOf(false) }
     var savingConsent by remember { mutableStateOf(false) }
+    var selectedMember by remember { mutableStateOf<FamilyMemberItem?>(null) }
+    var memberConsentSummary by remember { mutableStateOf<Map<String, Boolean>?>(null) }
+    var loadingMemberConsent by remember { mutableStateOf(false) }
+    var removingMember by remember { mutableStateOf(false) }
+    var showRemoveConfirmation by remember { mutableStateOf(false) }
 
     fun loadInvitations() {
         val email = user?.email?.trim()?.lowercase(Locale.ROOT)
@@ -643,6 +650,20 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                     membershipSnapshot.documents.forEach { membership ->
                         val groupId = membership.getString("groupId").orEmpty()
                         val role = membership.getString("role").orEmpty()
+                        // Older memberships may not contain profile fields. Let the member's own
+                        // signed-in app safely refresh only its name and email.
+                        if (membership.getString("status") == "active" && role == "Member") {
+                            val profileName = user?.displayName.orEmpty()
+                            val profileEmail = user?.email.orEmpty()
+                            if (profileName.isNotBlank() || profileEmail.isNotBlank()) {
+                                membership.reference.update(
+                                    mapOf(
+                                        "memberName" to profileName,
+                                        "memberEmail" to profileEmail
+                                    )
+                                )
+                            }
+                        }
                         if (groupId.isBlank()) {
                             pending--
                             if (pending == 0) {
@@ -696,6 +717,7 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                 }.map { doc ->
                     val uid = doc.getString("userId").orEmpty()
                     FamilyMemberItem(
+                        groupId = group.groupId,
                         uid = uid,
                         name = doc.getString("memberName")?.takeIf { it.isNotBlank() }
                             ?: if (uid == user?.uid) (user?.displayName ?: "You") else "Family member",
@@ -709,6 +731,60 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
             .addOnFailureListener { error ->
                 loadingMembersByGroup = loadingMembersByGroup - group.groupId
                 onNotice("Unable to load members for ${group.name}: ${error.localizedMessage ?: "Check Firestore membership read rules."}")
+            }
+    }
+
+    fun openMemberDetails(member: FamilyMemberItem) {
+        selectedMember = member
+        memberConsentSummary = null
+        loadingMemberConsent = true
+        db.collection("consents").document("${member.groupId}_${member.uid}").get()
+            .addOnSuccessListener { doc ->
+                memberConsentSummary = if (doc.exists()) {
+                    mapOf(
+                        "callDetails" to (doc.getBoolean("callDetails") ?: false),
+                        "recordingDetails" to (doc.getBoolean("recordingDetails") ?: false),
+                        "smsDetails" to (doc.getBoolean("smsDetails") ?: false)
+                    )
+                } else emptyMap()
+                loadingMemberConsent = false
+            }
+            .addOnFailureListener { error ->
+                loadingMemberConsent = false
+                memberConsentSummary = emptyMap()
+                onNotice("Unable to load member permissions: ${error.localizedMessage ?: "Please try again."}")
+            }
+    }
+
+    fun removeSelectedMember() {
+        val member = selectedMember ?: return
+        val admin = user ?: return
+        if (member.role == "Admin") {
+            onNotice("The group Admin cannot be removed from this screen.")
+            return
+        }
+        removingMember = true
+        db.collection("memberships").document("${member.groupId}_${member.uid}")
+            .update(
+                mapOf(
+                    "status" to "removed",
+                    "removedAt" to FieldValue.serverTimestamp(),
+                    "removedBy" to admin.uid
+                )
+            )
+            .addOnSuccessListener {
+                membersByGroup = membersByGroup + (
+                    member.groupId to membersByGroup[member.groupId].orEmpty().filterNot { it.uid == member.uid }
+                )
+                selectedMember = null
+                memberConsentSummary = null
+                showRemoveConfirmation = false
+                removingMember = false
+                onNotice("Member removed. Historical records and consent documents have been retained. You can now send a fresh invitation to the same email.")
+            }
+            .addOnFailureListener { error ->
+                removingMember = false
+                onNotice("Unable to remove member: ${error.localizedMessage ?: "Please check the updated Firestore rules."}")
             }
     }
 
@@ -998,7 +1074,9 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth()
                                                 .padding(vertical = 6.dp)
-                                                .background(PaleBlue, RoundedCornerShape(13.dp))
+                                                .clip(RoundedCornerShape(13.dp))
+                                                .background(PaleBlue)
+                                                .clickable { openMemberDetails(member) }
                                                 .padding(10.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
@@ -1216,6 +1294,69 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                 }
             }
         }
+    }
+
+    selectedMember?.let { member ->
+        AlertDialog(
+            onDismissRequest = { if (!removingMember) { selectedMember = null; memberConsentSummary = null } },
+            title = { Text("Member Details", color = AppText, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Text(member.name, color = AppText, fontWeight = FontWeight.SemiBold)
+                    Text(member.email.ifBlank { "Email not available" }, color = MutedText, fontSize = 12.sp)
+                    Text("Role: ${member.role}", color = MutedText, fontSize = 12.sp)
+                    Divider()
+                    Text("Data-sharing permissions", color = AppText, fontWeight = FontWeight.Bold)
+                    if (loadingMemberConsent) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Blue)
+                    } else {
+                        val consent = memberConsentSummary
+                        if (consent.isNullOrEmpty()) {
+                            Text("No saved consent record found.", color = MutedText, fontSize = 12.sp)
+                        } else {
+                            Text("Calls: ${if (consent["callDetails"] == true) "Allowed" else "Not allowed"}", color = AppText, fontSize = 12.sp)
+                            Text("Recordings: ${if (consent["recordingDetails"] == true) "Allowed" else "Not allowed"}", color = AppText, fontSize = 12.sp)
+                            Text("SMS: ${if (consent["smsDetails"] == true) "Allowed" else "Not allowed"}", color = AppText, fontSize = 12.sp)
+                        }
+                    }
+                    Text("Removing this member stops their group membership. Historical records are retained.", color = MutedText, fontSize = 11.sp)
+                }
+            },
+            confirmButton = {
+                if (member.role != "Admin") {
+                    TextButton(onClick = { showRemoveConfirmation = true }, enabled = !removingMember) {
+                        if (removingMember) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        else Text("Remove Member", color = Color(0xFFD04444))
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedMember = null; memberConsentSummary = null }, enabled = !removingMember) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    if (showRemoveConfirmation) {
+        AlertDialog(
+            onDismissRequest = { if (!removingMember) showRemoveConfirmation = false },
+            title = { Text("Remove family member?") },
+            text = {
+                Text("This removes the member's access to this group. Historical records and consent documents will be retained. You can invite the same email again later.")
+            },
+            confirmButton = {
+                TextButton(onClick = { removeSelectedMember() }, enabled = !removingMember) {
+                    if (removingMember) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    else Text("Remove", color = Color(0xFFD04444))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRemoveConfirmation = false }, enabled = !removingMember) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     consentGroup?.let { group ->
