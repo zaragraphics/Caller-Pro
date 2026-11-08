@@ -686,6 +686,17 @@ fun ActivityScreen() {
                 }
 
                 else -> {
+                    val groupedCalls = visibleCalls.groupBy { call ->
+                        val calendar = java.util.Calendar.getInstance().apply {
+                            timeInMillis = call.date
+                            set(java.util.Calendar.HOUR_OF_DAY, 0)
+                            set(java.util.Calendar.MINUTE, 0)
+                            set(java.util.Calendar.SECOND, 0)
+                            set(java.util.Calendar.MILLISECOND, 0)
+                        }
+                        calendar.timeInMillis
+                    }
+
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(
@@ -695,13 +706,68 @@ fun ActivityScreen() {
                         ),
                         verticalArrangement = Arrangement.spacedBy(9.dp)
                     ) {
-                        items(visibleCalls) { call ->
-                            CallHistoryCard(call)
+                        groupedCalls.forEach { (dayStart, dayCalls) ->
+                            item(key = "date-$dayStart") {
+                                CallDateHeader(
+                                    timestamp = dayStart,
+                                    callCount = dayCalls.size
+                                )
+                            }
+                            items(
+                                items = dayCalls,
+                                key = { call -> "${call.date}-${call.number}-${call.type}" }
+                            ) { call ->
+                                CallHistoryCard(call)
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CallDateHeader(timestamp: Long, callCount: Int) {
+    val todayStart = remember {
+        java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+    val yesterdayStart = remember(todayStart) {
+        java.util.Calendar.getInstance().apply {
+            timeInMillis = todayStart
+            add(java.util.Calendar.DAY_OF_YEAR, -1)
+        }.timeInMillis
+    }
+    val heading = when (timestamp) {
+        todayStart -> "Today"
+        yesterdayStart -> "Yesterday"
+        else -> SimpleDateFormat("EEEE, d MMMM", Locale.getDefault())
+            .format(Date(timestamp))
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            heading,
+            color = AppText,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            "$callCount ${if (callCount == 1) "call" else "calls"}",
+            color = MutedText,
+            fontSize = 11.sp
+        )
     }
 }
 
@@ -722,7 +788,7 @@ private fun CallHistoryCard(call: CallEntry) {
 
     val dateText = remember(call.date) {
         SimpleDateFormat(
-            "dd MMM yyyy, hh:mm a",
+            "hh:mm a",
             Locale.getDefault()
         ).format(Date(call.date))
     }
