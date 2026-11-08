@@ -160,7 +160,6 @@ fun HomeScreen(
         contentPadding = PaddingValues(bottom = 26.dp)
     ) {
         item {
-            // Compact top bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -189,7 +188,6 @@ fun HomeScreen(
         }
 
         item {
-            // Main welcome hero inspired by the supplied blue interface reference
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -205,9 +203,7 @@ fun HomeScreen(
                 )
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "Hello ${user?.displayName?.substringBefore(" ") ?: "there"},
-how can I help
-you today?",
+                    "Hello ${user?.displayName?.substringBefore(" ") ?: "there"}, how can I help you today?",
                     color = Color.White,
                     fontSize = 30.sp,
                     lineHeight = 35.sp,
@@ -509,8 +505,6 @@ fun AccountScreen() {
         }
     }
 
-    // IMPORTANT: Header and account body are in one vertical Column.
-    // This prevents the header and profile content from overlapping.
     Column(Modifier.fillMaxSize()) {
         PurpleHeader("My Account", "Your Caller Pro profile")
         Column(
