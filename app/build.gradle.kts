@@ -18,6 +18,19 @@ android {
         versionName = "1.0"
     }
 
+    // Stable signing key for GitHub Actions
+    val stableKeystorePath = System.getenv("ANDROID_KEYSTORE_FILE")
+    if (!stableKeystorePath.isNullOrBlank()) {
+        signingConfigs {
+            getByName("debug") {
+                storeFile = file(stableKeystorePath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -44,6 +57,5 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-storage")
 
-    // Google Sign-In
     implementation("com.google.android.gms:play-services-auth:21.3.0")
 }
