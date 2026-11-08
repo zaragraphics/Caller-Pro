@@ -1,3 +1,4 @@
+
 name: Build Caller Pro APK
 
 on:
@@ -27,10 +28,26 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Decode stable Android signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/callerpro-upload.jks"
+
       - name: Build APK
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/callerpro-upload.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: gradle assembleDebug --stacktrace
 
       - name: Show Android SHA-1 fingerprint
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/callerpro-upload.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: gradle signingReport
 
       - name: Upload APK
