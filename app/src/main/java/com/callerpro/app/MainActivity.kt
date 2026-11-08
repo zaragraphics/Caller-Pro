@@ -1716,8 +1716,6 @@ fun AccountOption(icon: ImageVector, title: String) {
         }
     }
 }
-Your file library is full. New files won't be saved to your library, but you can still use them in this chat. To store new files for later, free up space or upgrade your storage.
-
 
 
 
