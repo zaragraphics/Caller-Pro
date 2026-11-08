@@ -34,6 +34,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import java.util.UUID
 
 // Caller Pro: midnight blue, electric blue and cyan theme.
 private val Blue = Color(0xFF168BEE)
@@ -389,57 +392,351 @@ fun HomeActionCard(
     }
 }
 
+private data class FamilyGroupItem(
+    val groupId: String,
+    val name: String,
+    val role: String
+)
+
 @Composable
 fun FamilyScreen(onNotice: (String) -> Unit) {
-    Column(Modifier.fillMaxSize()) {
-        PurpleHeader("Family Groups", "Manage members, roles and permissions")
-        Column(Modifier.fillMaxSize().padding(20.dp)) {
-            Card(
-                Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
-            ) {
-                Column(Modifier.padding(20.dp)) {
-                    Icon(Icons.Default.Groups, null, tint = Blue, modifier = Modifier.size(42.dp))
-                    Spacer(Modifier.height(12.dp))
-                    Text("Your family group", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AppText)
-                    Text("No family group connected yet.", color = MutedText, fontSize = 14.sp)
-                    Spacer(Modifier.height(18.dp))
-                    Button(
-                        onClick = { onNotice("Family group creation and invitations will be connected to Firebase in the next step.") },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = Blue),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Icon(Icons.Default.Add, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Create Family Group")
-                    }
-                    OutlinedButton(
-                        onClick = { onNotice("You will be able to accept a family invitation here.") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Icon(Icons.Default.Mail, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Join with Invitation")
+    val user = FirebaseAuth.getInstance().currentUser
+    val db = remember { FirebaseFirestore.getInstance() }
+
+    var groupName by remember { mutableStateOf("") }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var creating by remember { mutableStateOf(false) }
+    var loadingGroups by remember { mutableStateOf(false) }
+    var groups by remember { mutableStateOf<List<FamilyGroupItem>>(emptyList()) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+
+    fun loadGroups() {
+        val uid = user?.uid
+        if (uid.isNullOrBlank()) {
+            groups = emptyList()
+            loadError = "Sign in with Google to create and view family groups."
+            return
+        }
+
+        loadingGroups = true
+        loadError = null
+        db.collection("memberships")
+            .whereEqualTo("userId", uid)
+            .get()
+            .addOnSuccessListener { membershipSnapshot ->
+                if (membershipSnapshot.isEmpty) {
+                    groups = emptyList()
+                    loadingGroups = false
+                } else {
+                    val loadedGroups = mutableListOf<FamilyGroupItem>()
+                    var pending = membershipSnapshot.documents.size
+
+                    membershipSnapshot.documents.forEach { membership ->
+                        val groupId = membership.getString("groupId").orEmpty()
+                        val role = membership.getString("role").orEmpty()
+                        if (groupId.isBlank()) {
+                            pending--
+                            if (pending == 0) {
+                                groups = loadedGroups.sortedBy { it.name.lowercase() }
+                                loadingGroups = false
+                            }
+                        } else {
+                            db.collection("familyGroups").document(groupId).get()
+                                .addOnSuccessListener { groupDocument ->
+                                    if (groupDocument.exists()) {
+                                        loadedGroups.add(
+                                            FamilyGroupItem(
+                                                groupId = groupId,
+                                                name = groupDocument.getString("name") ?: "Family Group",
+                                                role = role
+                                            )
+                                        )
+                                    }
+                                    pending--
+                                    if (pending == 0) {
+                                        groups = loadedGroups.sortedBy { it.name.lowercase() }
+                                        loadingGroups = false
+                                    }
+                                }
+                                .addOnFailureListener { error ->
+                                    pending--
+                                    if (pending == 0) {
+                                        groups = loadedGroups.sortedBy { it.name.lowercase() }
+                                        loadingGroups = false
+                                        loadError = error.localizedMessage ?: "Unable to load one or more groups."
+                                    }
+                                }
+                        }
                     }
                 }
             }
-            Spacer(Modifier.height(20.dp))
-            Text("Consent & Privacy", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AppText)
-            Spacer(Modifier.height(10.dp))
-            Card(colors = CardDefaults.cardColors(containerColor = PaleBlue), shape = RoundedCornerShape(16.dp)) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Shield, null, tint = Blue, modifier = Modifier.size(30.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        "Each member must explicitly approve data sharing. Members can see their sharing status and revoke consent.",
-                        fontSize = 13.sp, color = AppText
-                    )
+            .addOnFailureListener { error ->
+                loadingGroups = false
+                loadError = error.localizedMessage ?: "Unable to load family groups."
+            }
+    }
+
+    LaunchedEffect(user?.uid) {
+        loadGroups()
+    }
+
+    fun createFamilyGroup() {
+        val uid = user?.uid
+        val cleanName = groupName.trim()
+
+        if (uid.isNullOrBlank()) {
+            onNotice("Please sign in with Google before creating a family group.")
+            return
+        }
+        if (cleanName.isBlank()) {
+            onNotice("Please enter a family group name.")
+            return
+        }
+        if (cleanName.length > 60) {
+            onNotice("Family group name must be 60 characters or fewer.")
+            return
+        }
+
+        creating = true
+        val newGroupId = UUID.randomUUID().toString()
+            .replace("-", "")
+            .take(10)
+            .uppercase(Locale.ROOT)
+
+        val groupRef = db.collection("familyGroups").document(newGroupId)
+        val membershipRef = db.collection("memberships")
+            .document("${newGroupId}_${uid}")
+
+        val groupData = hashMapOf(
+            "groupId" to newGroupId,
+            "name" to cleanName,
+            "creatorUid" to uid,
+            "adminUid" to uid,
+            "status" to "active",
+            "createdAt" to FieldValue.serverTimestamp()
+        )
+        val membershipData = hashMapOf(
+            "groupId" to newGroupId,
+            "userId" to uid,
+            "role" to "Admin",
+            "status" to "active",
+            "createdAt" to FieldValue.serverTimestamp()
+        )
+
+        val batch = db.batch()
+        batch.set(groupRef, groupData)
+        batch.set(membershipRef, membershipData)
+        batch.commit()
+            .addOnSuccessListener {
+                creating = false
+                showCreateDialog = false
+                groupName = ""
+                onNotice("Family group created successfully. You are the Admin. Group ID: $newGroupId")
+                loadGroups()
+            }
+            .addOnFailureListener { error ->
+                creating = false
+                onNotice(
+                    "Unable to create family group: ${
+                        error.localizedMessage ?: "Please check your internet connection and Firestore Rules."
+                    }"
+                )
+            }
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(AppBackground)
+    ) {
+        PurpleHeader("Family Groups", "Manage members, roles and permissions")
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Column(Modifier.padding(20.dp)) {
+                        Icon(Icons.Default.Groups, null, tint = Blue, modifier = Modifier.size(42.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Text("Your family groups", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AppText)
+                        Text(
+                            "Create a group and become its Admin. You can also belong to other groups as a Member.",
+                            color = MutedText,
+                            fontSize = 13.sp
+                        )
+                        Spacer(Modifier.height(18.dp))
+                        Button(
+                            onClick = {
+                                if (user == null) {
+                                    onNotice("Please sign in with Google before creating a family group.")
+                                } else {
+                                    groupName = ""
+                                    showCreateDialog = true
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !creating,
+                            colors = ButtonDefaults.buttonColors(containerColor = Blue),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(Icons.Default.Add, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Create Family Group")
+                        }
+                        OutlinedButton(
+                            onClick = { onNotice("Family invitations will be available in the next development step.") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(Icons.Default.Mail, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Join with Invitation")
+                        }
+                    }
+                }
+            }
+
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Your Groups", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AppText)
+                    Spacer(Modifier.weight(1f))
+                    TextButton(
+                        onClick = { loadGroups() },
+                        enabled = !loadingGroups
+                    ) {
+                        Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Refresh")
+                    }
+                }
+            }
+
+            if (loadingGroups) {
+                item {
+                    Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Blue)
+                    }
+                }
+            } else if (groups.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White)
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.Groups, null, tint = MutedText, modifier = Modifier.size(34.dp))
+                            Spacer(Modifier.height(8.dp))
+                            Text("No family groups yet", color = AppText, fontWeight = FontWeight.SemiBold)
+                            Text("Groups you create or join will appear here.", color = MutedText, fontSize = 12.sp)
+                        }
+                    }
+                }
+            } else {
+                items(groups, key = { it.groupId }) { group ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White)
+                    ) {
+                        Column(Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Groups, null, tint = Blue, modifier = Modifier.size(28.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(group.name, color = AppText, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                    Text("Group ID: ${group.groupId}", color = MutedText, fontSize = 11.sp)
+                                }
+                                Surface(
+                                    color = PaleBlue,
+                                    shape = RoundedCornerShape(20.dp)
+                                ) {
+                                    Text(
+                                        group.role,
+                                        color = Blue,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            loadError?.let { message ->
+                item {
+                    Text(message, color = Color(0xFFD04444), fontSize = 12.sp)
+                }
+            }
+
+            item {
+                Text("Consent & Privacy", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AppText)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = PaleBlue),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Shield, null, tint = Blue, modifier = Modifier.size(30.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "Each member must explicitly approve data sharing. Members can see their sharing status and revoke consent.",
+                            fontSize = 13.sp,
+                            color = AppText
+                        )
+                    }
                 }
             }
         }
+    }
+
+    if (showCreateDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!creating) showCreateDialog = false },
+            title = { Text("Create Family Group") },
+            text = {
+                Column {
+                    Text("Enter a name for your family group.", color = MutedText, fontSize = 13.sp)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = groupName,
+                        onValueChange = { if (it.length <= 60) groupName = it },
+                        label = { Text("Family Group Name") },
+                        placeholder = { Text("Example: Mulla Family") },
+                        singleLine = true,
+                        enabled = !creating
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { createFamilyGroup() },
+                    enabled = !creating && groupName.trim().isNotEmpty()
+                ) {
+                    if (creating) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("Create")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showCreateDialog = false },
+                    enabled = !creating
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
