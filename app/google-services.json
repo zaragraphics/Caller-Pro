@@ -23,6 +23,14 @@
           }
         },
         {
+          "client_id": "504620348584-da76q5q31nuqa7q69qltdvd8lttoc24t.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.callerpro.app",
+            "certificate_hash": "5e9a2cf34a14ff5162a64bda907da8d5f4c86850"
+          }
+        },
+        {
           "client_id": "504620348584-lgm6epk18tl1hl1b8gv8s3mbj8e785t3.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
