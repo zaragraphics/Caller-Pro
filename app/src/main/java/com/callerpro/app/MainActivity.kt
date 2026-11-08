@@ -496,7 +496,8 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                 invitations = invitations.filterNot { it.invitationId == invitation.invitationId }
                 if (accept) {
                     onNotice("Invitation accepted. You are now a Member of ${invitation.groupName}.")
-                    loadGroups()
+                    groups = (groups + FamilyGroupItem(invitation.groupId, invitation.groupName, "Member"))
+                        .distinctBy { it.groupId }
                 } else {
                     onNotice("Invitation rejected.")
                 }
@@ -520,7 +521,7 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
             onNotice("Please enter a valid email address.")
             return
         }
-        if (email == admin.email.trim().lowercase(Locale.ROOT)) {
+        if (email == admin.email?.trim()?.lowercase(Locale.ROOT)) {
             onNotice("You cannot invite your own account.")
             return
         }
