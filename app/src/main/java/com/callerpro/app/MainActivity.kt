@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -398,6 +399,13 @@ private data class FamilyGroupItem(
     val role: String
 )
 
+private data class FamilyMemberItem(
+    val uid: String,
+    val name: String,
+    val email: String,
+    val role: String
+)
+
 private data class FamilyInvitationItem(
     val invitationId: String,
     val groupId: String,
@@ -425,6 +433,8 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
     var invitations by remember { mutableStateOf<List<FamilyInvitationItem>>(emptyList()) }
     var loadingInvitations by remember { mutableStateOf(false) }
     var respondingInvitation by remember { mutableStateOf<String?>(null) }
+    var membersByGroup by remember { mutableStateOf<Map<String, List<FamilyMemberItem>>>(emptyMap()) }
+    var loadingMembersByGroup by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     fun loadInvitations() {
         val email = user?.email?.trim()?.lowercase(Locale.ROOT)
@@ -484,6 +494,8 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                 "userId" to currentUser.uid,
                 "role" to "Member",
                 "status" to "active",
+                "memberName" to (currentUser.displayName ?: "Caller Pro Member"),
+                "memberEmail" to (currentUser.email ?: ""),
                 "createdAt" to FieldValue.serverTimestamp(),
                 "invitationId" to invitation.invitationId
             )
@@ -637,9 +649,44 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
             }
     }
 
+    fun loadGroupMembers(group: FamilyGroupItem) {
+        loadingMembersByGroup = loadingMembersByGroup + group.groupId
+        db.collection("memberships")
+            .whereEqualTo("groupId", group.groupId)
+            .get()
+            .addOnSuccessListener { snapshot ->
+                val loaded = snapshot.documents.filter {
+                    it.getString("status") == "active"
+                }.map { doc ->
+                    val uid = doc.getString("userId").orEmpty()
+                    FamilyMemberItem(
+                        uid = uid,
+                        name = doc.getString("memberName")?.takeIf { it.isNotBlank() }
+                            ?: if (uid == user?.uid) (user?.displayName ?: "You") else "Family member",
+                        email = doc.getString("memberEmail").orEmpty(),
+                        role = doc.getString("role") ?: "Member"
+                    )
+                }.sortedWith(compareBy<FamilyMemberItem> { if (it.role == "Admin") 0 else 1 }.thenBy { it.name.lowercase() })
+                membersByGroup = membersByGroup + (group.groupId to loaded)
+                loadingMembersByGroup = loadingMembersByGroup - group.groupId
+            }
+            .addOnFailureListener { error ->
+                loadingMembersByGroup = loadingMembersByGroup - group.groupId
+                onNotice("Unable to load members for ${group.name}: ${error.localizedMessage ?: "Check Firestore membership read rules."}")
+            }
+    }
+
     LaunchedEffect(user?.uid, user?.email) {
         loadGroups()
         loadInvitations()
+    }
+
+    LaunchedEffect(groups) {
+        groups.filter { it.role == "Admin" }.forEach { group ->
+            if (membersByGroup[group.groupId] == null && group.groupId !in loadingMembersByGroup) {
+                loadGroupMembers(group)
+            }
+        }
     }
 
     fun createFamilyGroup() {
@@ -682,6 +729,8 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
             "userId" to uid,
             "role" to "Admin",
             "status" to "active",
+            "memberName" to (user?.displayName ?: "Family Admin"),
+            "memberEmail" to (user?.email ?: ""),
             "createdAt" to FieldValue.serverTimestamp()
         )
 
@@ -879,6 +928,72 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
                                     )
                                 }
                             }
+                            Spacer(Modifier.height(14.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Members", color = AppText, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Spacer(Modifier.width(7.dp))
+                                Surface(color = PaleBlue, shape = RoundedCornerShape(20.dp)) {
+                                    Text(
+                                        "${membersByGroup[group.groupId]?.size ?: 0}",
+                                        color = Blue,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                                Spacer(Modifier.weight(1f))
+                                TextButton(
+                                    onClick = { loadGroupMembers(group) },
+                                    enabled = group.groupId !in loadingMembersByGroup
+                                ) {
+                                    Icon(Icons.Default.Refresh, null, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(3.dp))
+                                    Text("Refresh", fontSize = 11.sp)
+                                }
+                            }
+                            if (group.groupId in loadingMembersByGroup) {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Blue)
+                            } else {
+                                val groupMembers = membersByGroup[group.groupId].orEmpty()
+                                if (groupMembers.isEmpty()) {
+                                    Text("No active members found yet. Accepted members will appear here.", color = MutedText, fontSize = 12.sp)
+                                } else {
+                                    groupMembers.forEach { member ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth()
+                                                .padding(vertical = 6.dp)
+                                                .background(PaleBlue, RoundedCornerShape(13.dp))
+                                                .padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                Modifier.size(36.dp).clip(CircleShape).background(Blue.copy(alpha = 0.12f)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Default.Person, null, tint = Blue)
+                                            }
+                                            Spacer(Modifier.width(10.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(member.name, color = AppText, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                                Text(member.email.ifBlank { member.uid.take(10) }, color = MutedText, fontSize = 11.sp)
+                                            }
+                                            Surface(
+                                                color = if (member.role == "Admin") Navy else Color.White,
+                                                shape = RoundedCornerShape(20.dp)
+                                            ) {
+                                                Text(
+                                                    member.role,
+                                                    color = if (member.role == "Admin") Color.White else Blue,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             if (group.role == "Admin") {
                                 Spacer(Modifier.height(12.dp))
                                 OutlinedButton(
@@ -967,44 +1082,104 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
     }
 
     if (showInviteDialog) {
-        AlertDialog(
-            onDismissRequest = { if (!sendingInvite) showInviteDialog = false },
-            title = { Text("Invite Family Member") },
-            text = {
+        Dialog(onDismissRequest = { if (!sendingInvite) showInviteDialog = false }) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(26.dp),
+                color = AppBackground,
+                shadowElevation = 18.dp
+            ) {
                 Column {
-                    Text(
-                        "Send an invitation to join ${selectedInviteGroup?.name ?: "this family group"}. The person must sign in with this exact email address to receive it.",
-                        color = MutedText,
-                        fontSize = 13.sp
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = inviteEmail,
-                        onValueChange = { inviteEmail = it },
-                        label = { Text("Registered email address") },
-                        placeholder = { Text("example@gmail.com") },
-                        singleLine = true,
-                        enabled = !sendingInvite
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text("Invitations expire after 7 days.", color = MutedText, fontSize = 11.sp)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { sendInvitation() }, enabled = !sendingInvite && inviteEmail.isNotBlank()) {
-                    if (sendingInvite) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    } else {
-                        Text("Send Invitation")
+                    Column(
+                        modifier = Modifier.fillMaxWidth()
+                            .background(Brush.linearGradient(listOf(DeepBlue, Navy, Blue)))
+                            .padding(horizontal = 22.dp, vertical = 22.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier.size(46.dp).clip(RoundedCornerShape(15.dp))
+                                    .background(Color.White.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.PersonAdd, null, tint = Cyan, modifier = Modifier.size(25.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text("Invite Family Member", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                                Text("Add someone to your trusted group", color = Color.White.copy(alpha = 0.78f), fontSize = 11.sp)
+                            }
+                        }
+                    }
+                    Column(Modifier.padding(20.dp)) {
+                        Text("Family group", color = MutedText, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(selectedInviteGroup?.name ?: "Family Group", color = AppText, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            "Enter the member's registered Google email. They must sign in to Caller Pro with this same email to receive and accept the invitation.",
+                            color = MutedText,
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        OutlinedTextField(
+                            value = inviteEmail,
+                            onValueChange = { inviteEmail = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Email address") },
+                            placeholder = { Text("example@gmail.com") },
+                            leadingIcon = { Icon(Icons.Default.Email, null, tint = Blue) },
+                            singleLine = true,
+                            enabled = !sendingInvite,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Blue,
+                                focusedLabelColor = Blue,
+                                cursorColor = Blue,
+                                focusedContainerColor = Color.White,
+                                unfocusedContainerColor = Color.White
+                            )
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .background(PaleBlue, RoundedCornerShape(12.dp))
+                                .padding(11.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Info, null, tint = Blue, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Invitation remains valid for 7 days.", color = Navy, fontSize = 11.sp)
+                        }
+                        Spacer(Modifier.height(20.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(
+                                onClick = { showInviteDialog = false },
+                                enabled = !sendingInvite,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(13.dp)
+                            ) { Text("Cancel", color = MutedText) }
+                            Button(
+                                onClick = { sendInvitation() },
+                                enabled = !sendingInvite && inviteEmail.isNotBlank(),
+                                modifier = Modifier.weight(1.35f),
+                                shape = RoundedCornerShape(13.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                            ) {
+                                if (sendingInvite) {
+                                    CircularProgressIndicator(modifier = Modifier.size(17.dp), color = Color.White, strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(7.dp))
+                                    Text("Sending")
+                                } else {
+                                    Icon(Icons.Default.Send, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Send Invite")
+                                }
+                            }
+                        }
                     }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showInviteDialog = false }, enabled = !sendingInvite) {
-                    Text("Cancel")
-                }
             }
-        )
+        }
     }
 }
 
