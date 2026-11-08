@@ -15,6 +15,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "504620348584-1g598qs1fdlfn6rupag34h8vt5m7m2kk.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.callerpro.app",
+            "certificate_hash": "5e9a2cf34a14ff5162a64bda907da8d5f4c36850"
+          }
+        },
+        {
           "client_id": "504620348584-lgm6epk18tl1hl1b8gv8s3mbj8e785t3.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
