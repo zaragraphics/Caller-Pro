@@ -3,7 +3,7 @@ name: Build Caller Pro APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, batch-1-recording-engine]
   workflow_dispatch:
 
 permissions:
