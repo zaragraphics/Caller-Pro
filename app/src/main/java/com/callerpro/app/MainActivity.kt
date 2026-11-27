@@ -3,6 +3,8 @@ package com.callerpro.app
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.os.Build
 import android.provider.CallLog
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -167,6 +169,57 @@ fun HomeScreen(
     onNotice: (String) -> Unit
 ) {
     val user = FirebaseAuth.getInstance().currentUser
+    val context = LocalContext.current
+    val recordingPrefs = remember {
+        context.getSharedPreferences(
+            CallRecordingService.PREFS_NAME,
+            android.content.Context.MODE_PRIVATE
+        )
+    }
+    var monitorEnabled by remember {
+        mutableStateOf(recordingPrefs.getBoolean(CallRecordingService.PREF_MONITOR_ENABLED, false))
+    }
+    val requiredRecordingPermissions = remember {
+        buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            add(Manifest.permission.READ_PHONE_STATE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+    val startMonitorAfterPermission = {
+        try {
+            recordingPrefs.edit()
+                .putBoolean(CallRecordingService.PREF_MONITOR_ENABLED, true)
+                .apply()
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, CallRecordingService::class.java)
+            )
+            monitorEnabled = true
+            onNotice("Call monitoring is enabled. Caller Pro will show an ongoing notification while monitoring.")
+        } catch (error: Exception) {
+            recordingPrefs.edit()
+                .putBoolean(CallRecordingService.PREF_MONITOR_ENABLED, false)
+                .apply()
+            monitorEnabled = false
+            onNotice("Unable to start call monitoring: ${error.localizedMessage ?: "Please try again."}")
+        }
+    }
+    val recordingPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        val allGranted = requiredRecordingPermissions.all { permission ->
+            results[permission] == true ||
+                ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+        if (allGranted) {
+            startMonitorAfterPermission()
+        } else {
+            onNotice("Call monitoring needs microphone and phone-state permissions. Notification permission is also required on Android 13 and newer so the status is visible.")
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(AppBackground),
@@ -266,6 +319,84 @@ fun HomeScreen(
             Column(Modifier.padding(horizontal = 18.dp, vertical = 22.dp)) {
                 Text("Quick Access", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AppText)
                 Text("Choose what you want to open", fontSize = 12.sp, color = MutedText)
+                Spacer(Modifier.height(15.dp))
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Mic, contentDescription = null, tint = Blue)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    if (monitorEnabled) "Call monitoring enabled" else "Automatic call monitoring",
+                                    color = AppText,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    if (monitorEnabled) "An ongoing notification is active" else "Turn it on only when you want Caller Pro to monitor calls",
+                                    color = MutedText,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            if (monitorEnabled) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = "Enabled", tint = Color(0xFF159B63))
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "Recording uses the phone microphone. Android and device restrictions may prevent the other caller's voice from being captured.",
+                            color = MutedText,
+                            fontSize = 11.sp
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        if (monitorEnabled) {
+                            OutlinedButton(
+                                onClick = {
+                                    context.startService(
+                                        Intent(context, CallRecordingService::class.java).apply {
+                                            action = CallRecordingService.ACTION_STOP
+                                        }
+                                    )
+                                    monitorEnabled = false
+                                    recordingPrefs.edit()
+                                        .putBoolean(CallRecordingService.PREF_MONITOR_ENABLED, false)
+                                        .apply()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Stop, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Stop monitoring")
+                            }
+                        } else {
+                            Button(
+                                onClick = {
+                                    val missing = requiredRecordingPermissions.filter { permission ->
+                                        ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
+                                    }
+                                    if (missing.isEmpty()) {
+                                        startMonitorAfterPermission()
+                                    } else {
+                                        recordingPermissionLauncher.launch(missing.toTypedArray())
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = Blue),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Mic, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Enable call monitoring")
+                            }
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(15.dp))
 
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
