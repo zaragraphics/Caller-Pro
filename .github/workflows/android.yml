@@ -1,5 +1,6 @@
 
 name: Build Caller Pro APK
+# Launcher icon and call-history persistence updates are validated on this branch.
 
 on:
   push:
