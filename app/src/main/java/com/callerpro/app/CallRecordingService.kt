@@ -1,4 +1,3 @@
-
 package com.callerpro.app
 
 import android.app.Notification
@@ -8,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
@@ -15,6 +15,7 @@ import android.telephony.PhoneStateListener
 import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -24,6 +25,8 @@ class CallRecordingService : Service() {
 
     companion object {
         const val ACTION_STOP = "com.callerpro.app.STOP_CALL_RECORDING"
+        const val PREFS_NAME = "caller_pro_recording"
+        const val PREF_MONITOR_ENABLED = "monitor_enabled"
         private const val CHANNEL_ID = "caller_pro_recording"
         private const val NOTIFICATION_ID = 7101
     }
@@ -40,23 +43,24 @@ class CallRecordingService : Service() {
         createNotificationChannel()
     }
 
-    override fun onStartCommand(
-        intent: Intent?,
-        flags: Int,
-        startId: Int
-    ): Int {
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            stopRecordingAndService()
+            stopMonitoring()
             return START_NOT_STICKY
         }
 
         if (phoneListener != null) return START_NOT_STICKY
 
-        try {
-            val notification = buildNotification(
-                "Ready for your next call"
-            )
+        if (!hasPermission(android.Manifest.permission.RECORD_AUDIO) ||
+            !hasPermission(android.Manifest.permission.READ_PHONE_STATE)
+        ) {
+            clearMonitorPreference()
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
+        try {
+            val notification = buildNotification("Monitoring enabled • waiting for a call")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ServiceCompat.startForeground(
                     this,
@@ -67,36 +71,38 @@ class CallRecordingService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
-
             registerCallStateListener()
-
         } catch (_: Exception) {
+            clearMonitorPreference()
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
 
         return START_NOT_STICKY
     }
 
-    private fun registerCallStateListener() {
-        val manager =
-            getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+    private fun hasPermission(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 
+    private fun registerCallStateListener() {
+        val manager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
         telephonyManager = manager
 
         val listener = object : PhoneStateListener() {
-            override fun onCallStateChanged(
-                state: Int,
-                phoneNumber: String?
-            ) {
+            override fun onCallStateChanged(state: Int, phoneNumber: String?) {
                 when (state) {
                     TelephonyManager.CALL_STATE_OFFHOOK -> {
                         callHasConnected = true
                         if (!recordingStarted) startRecording()
                     }
-
                     TelephonyManager.CALL_STATE_IDLE -> {
                         if (callHasConnected) {
-                            stopRecordingAndService()
+                            stopRecording()
+                            callHasConnected = false
+                            getSystemService(NotificationManager::class.java).notify(
+                                NOTIFICATION_ID,
+                                buildNotification("Monitoring enabled • ready for next call")
+                            )
                         }
                     }
                 }
@@ -104,115 +110,103 @@ class CallRecordingService : Service() {
         }
 
         phoneListener = listener
-        manager.listen(
-            listener,
-            PhoneStateListener.LISTEN_CALL_STATE
-        )
+        manager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
     }
 
     private fun startRecording() {
-        val folder =
-            RecordingStorage.getRecordingsFolder(this) ?: return
-
-        val stamp = SimpleDateFormat(
-            "yyyyMMdd_HHmmss",
-            Locale.US
-        ).format(Date())
-
+        if (!hasPermission(android.Manifest.permission.RECORD_AUDIO)) return
+        val folder = RecordingStorage.getRecordingsFolder(this) ?: return
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val file = File(folder, "CallerPro_$stamp.m4a")
+        var candidate: MediaRecorder? = null
 
         try {
-            val mediaRecorder =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    MediaRecorder(this)
-                } else {
-                    @Suppress("DEPRECATION")
-                    MediaRecorder()
-                }
-
-            mediaRecorder.setAudioSource(
-                MediaRecorder.AudioSource.MIC
-            )
-            mediaRecorder.setOutputFormat(
-                MediaRecorder.OutputFormat.MPEG_4
-            )
-            mediaRecorder.setAudioEncoder(
-                MediaRecorder.AudioEncoder.AAC
-            )
-            mediaRecorder.setAudioEncodingBitRate(128000)
-            mediaRecorder.setAudioSamplingRate(44100)
-            mediaRecorder.setOutputFile(file.absolutePath)
-
-            mediaRecorder.prepare()
-            mediaRecorder.start()
-
-            recorder = mediaRecorder
-            outputFile = file
-            recordingStarted = true
-
-            getSystemService(NotificationManager::class.java)
-                .notify(
-                    NOTIFICATION_ID,
-                    buildNotification("Recording is active")
-                )
-
-        } catch (_: Exception) {
-            try {
-                recorder?.release()
-            } catch (_: Exception) {
+            candidate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(this)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
             }
 
+            candidate.setAudioSource(MediaRecorder.AudioSource.MIC)
+            candidate.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            candidate.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            candidate.setAudioEncodingBitRate(128000)
+            candidate.setAudioSamplingRate(44100)
+            candidate.setOutputFile(file.absolutePath)
+            candidate.prepare()
+            candidate.start()
+
+            recorder = candidate
+            outputFile = file
+            recordingStarted = true
+            getSystemService(NotificationManager::class.java).notify(
+                NOTIFICATION_ID,
+                buildNotification("Microphone recording active")
+            )
+        } catch (_: Exception) {
+            try { candidate?.reset() } catch (_: Exception) {}
+            try { candidate?.release() } catch (_: Exception) {}
             recorder = null
+            recordingStarted = false
+            outputFile = null
             file.delete()
-            stopRecordingAndService()
+            getSystemService(NotificationManager::class.java).notify(
+                NOTIFICATION_ID,
+                buildNotification("Recording unavailable • monitoring continues")
+            )
         }
     }
 
-    private fun stopRecordingAndService() {
+    private fun stopRecording() {
+        val currentRecorder = recorder
+        try {
+            currentRecorder?.stop()
+        } catch (_: Exception) {
+            outputFile?.delete()
+        } finally {
+            try { currentRecorder?.reset() } catch (_: Exception) {}
+            try { currentRecorder?.release() } catch (_: Exception) {}
+            recorder = null
+            recordingStarted = false
+            outputFile = null
+        }
+    }
+
+    private fun stopMonitoring() {
         stopRecording()
+        try {
+            phoneListener?.let { listener ->
+                telephonyManager?.listen(listener, PhoneStateListener.LISTEN_NONE)
+            }
+        } catch (_: Exception) {
+        }
+        phoneListener = null
+        telephonyManager = null
+        callHasConnected = false
+        clearMonitorPreference()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
-    private fun stopRecording() {
-        try {
-            recorder?.stop()
-        } catch (_: Exception) {
-            outputFile?.delete()
-        }
-
-        try {
-            recorder?.reset()
-            recorder?.release()
-        } catch (_: Exception) {
-        }
-
-        recorder = null
-        recordingStarted = false
+    private fun clearMonitorPreference() {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(PREF_MONITOR_ENABLED, false)
+            .apply()
     }
 
     private fun buildNotification(message: String): Notification {
         val openPendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or
-                PendingIntent.FLAG_IMMUTABLE
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
-        val stopIntent = Intent(
-            this,
-            CallRecordingService::class.java
-        ).apply {
+        val stopIntent = Intent(this, CallRecordingService::class.java).apply {
             action = ACTION_STOP
         }
-
         val stopPendingIntent = PendingIntent.getService(
-            this,
-            1,
-            stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or
-                PendingIntent.FLAG_IMMUTABLE
+            this, 1, stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -223,51 +217,32 @@ class CallRecordingService : Service() {
             .setOngoing(true)
             .setSilent(true)
             .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setForegroundServiceBehavior(
-                NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE
-            )
-            .addAction(
-                android.R.drawable.ic_media_pause,
-                "Stop",
-                stopPendingIntent
-            )
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .addAction(android.R.drawable.ic_media_pause, "Stop monitoring", stopPendingIntent)
             .build()
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Call recording",
-                NotificationManager.IMPORTANCE_LOW
+                CHANNEL_ID, "Call recording", NotificationManager.IMPORTANCE_LOW
             )
-
-            channel.description =
-                "Silent, compact Caller Pro recording status"
-
+            channel.description = "Visible status for Caller Pro call monitoring and recording"
             channel.setSound(null, null)
             channel.enableVibration(false)
             channel.enableLights(false)
             channel.setShowBadge(false)
-
-            getSystemService(NotificationManager::class.java)
-                .createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
     override fun onDestroy() {
         try {
-            phoneListener?.let {
-                telephonyManager?.listen(
-                    it,
-                    PhoneStateListener.LISTEN_NONE
-                )
-            }
+            phoneListener?.let { telephonyManager?.listen(it, PhoneStateListener.LISTEN_NONE) }
         } catch (_: Exception) {
         }
-
         stopRecording()
         super.onDestroy()
     }
