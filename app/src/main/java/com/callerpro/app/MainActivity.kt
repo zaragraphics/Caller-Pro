@@ -1577,51 +1577,55 @@ fun ActivityScreen() {
     var searchText by remember { mutableStateOf("") }
 
     val refreshCalls: () -> Unit = {
-        if (hasPermission) {
-            loading = true
-            error = null
+        loading = true
+        error = null
+
+        // Caller Pro's own database is the source of truth for the Activity screen.
+        // Phone call-log rows are imported when permission is available, but deleting
+        // them from the Phone app must never remove already-saved Caller Pro entries.
+        Thread {
+            var syncError: String? = null
             try {
-                val result = mutableListOf<CallEntry>()
-                val projection = arrayOf(
-                    CallLog.Calls.CACHED_NAME,
-                    CallLog.Calls.NUMBER,
-                    CallLog.Calls.TYPE,
-                    CallLog.Calls.DATE,
-                    CallLog.Calls.DURATION
-                )
+                if (hasPermission) {
+                    val syncResult = CallHistorySync.syncFromPhoneCallLog(context.applicationContext)
+                    syncError = syncResult.errorMessage
+                }
 
-                context.contentResolver.query(
-                    CallLog.Calls.CONTENT_URI,
-                    projection,
-                    null,
-                    null,
-                    "${CallLog.Calls.DATE} DESC"
-                )?.use { cursor ->
-                    val nameIndex = cursor.getColumnIndexOrThrow(CallLog.Calls.CACHED_NAME)
-                    val numberIndex = cursor.getColumnIndexOrThrow(CallLog.Calls.NUMBER)
-                    val typeIndex = cursor.getColumnIndexOrThrow(CallLog.Calls.TYPE)
-                    val dateIndex = cursor.getColumnIndexOrThrow(CallLog.Calls.DATE)
-                    val durationIndex = cursor.getColumnIndexOrThrow(CallLog.Calls.DURATION)
-
-                    while (cursor.moveToNext() && result.size < 500) {
-                        result.add(
-                            CallEntry(
-                                name = cursor.getString(nameIndex).orEmpty(),
-                                number = cursor.getString(numberIndex).orEmpty(),
-                                type = cursor.getInt(typeIndex),
-                                date = cursor.getLong(dateIndex),
-                                durationSeconds = cursor.getLong(durationIndex)
-                            )
+                val savedRecords = CallHistoryDatabase.getInstance(context.applicationContext)
+                    .getAllCalls()
+                    .take(500)
+                    .map { record ->
+                        CallEntry(
+                            name = record.name,
+                            number = record.number,
+                            type = when (record.type) {
+                                "Incoming" -> CallLog.Calls.INCOMING_TYPE
+                                "Outgoing" -> CallLog.Calls.OUTGOING_TYPE
+                                "Missed" -> CallLog.Calls.MISSED_TYPE
+                                "Rejected" -> CallLog.Calls.REJECTED_TYPE
+                                "Blocked" -> CallLog.Calls.BLOCKED_TYPE
+                                "Voicemail" -> CallLog.Calls.VOICEMAIL_TYPE
+                                else -> CallLog.Calls.MISSED_TYPE
+                            },
+                            date = record.dateMillis,
+                            durationSeconds = record.durationSeconds
                         )
                     }
+
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    calls = savedRecords
+                    if (savedRecords.isEmpty() && syncError != null) {
+                        error = syncError
+                    }
+                    loading = false
                 }
-                calls = result
             } catch (exception: Exception) {
-                error = exception.localizedMessage ?: "Unable to read call history."
-            } finally {
-                loading = false
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    error = exception.localizedMessage ?: "Unable to load Caller Pro history."
+                    loading = false
+                }
             }
-        }
+        }.start()
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
