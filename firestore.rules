@@ -46,6 +46,7 @@ service cloud.firestore {
       );
 
       allow create: if signedIn()
+        && membershipId == request.resource.data.groupId + "_" + request.auth.uid
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.status == "active"
         && (
@@ -70,7 +71,8 @@ service cloud.firestore {
         && request.resource.data.groupId == resource.data.groupId
         && request.resource.data.role == resource.data.role
         && request.resource.data.status == "removed"
-        && request.resource.data.removedBy == request.auth.uid;
+        && request.resource.data.removedBy == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "removedAt", "removedBy"]);
       allow delete: if false;
     }
 
@@ -95,7 +97,8 @@ service cloud.firestore {
         && request.resource.data.recipientEmail == resource.data.recipientEmail
         && request.resource.data.inviterUid == resource.data.inviterUid
         && request.resource.data.status in ["accepted", "rejected"]
-        && request.resource.data.acceptedByUid == request.auth.uid;
+        && request.resource.data.acceptedByUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "acceptedByUid", "respondedAt"]);
       allow delete: if false;
     }
 
@@ -110,7 +113,8 @@ service cloud.firestore {
         && consentId == request.resource.data.groupId + "_" + request.auth.uid
         && request.resource.data.callDetails is bool
         && request.resource.data.recordingDetails is bool
-        && request.resource.data.smsDetails is bool;
+        && request.resource.data.smsDetails is bool
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["groupId", "userId", "callDetails", "recordingDetails", "smsDetails", "consentVersion", "updatedAt"]);
       allow delete: if false;
     }
 
