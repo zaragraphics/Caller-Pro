@@ -285,6 +285,17 @@ class CallHistoryDatabase private constructor(
     }
 
     @Synchronized
+    fun unlinkRecordingByFileName(recordingFileName: String): Int {
+        val values = ContentValues().apply { putNull(COL_RECORDING) }
+        return writableDatabase.update(
+            TABLE_CALLS,
+            values,
+            "$COL_RECORDING = ?",
+            arrayOf(recordingFileName)
+        )
+    }
+
+    @Synchronized
     fun getCallCount(): Int {
         readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM $TABLE_CALLS",
