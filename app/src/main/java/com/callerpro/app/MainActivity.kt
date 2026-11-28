@@ -1839,7 +1839,14 @@ fun ActivityScreen() {
                                 items = dayCalls,
                                 key = { call -> "${call.date}-${call.number}-${call.type}" }
                             ) { call ->
-                                CallHistoryCard(call)
+                                CallHistoryCard(
+                                    call = call,
+                                    onRecordingDeleted = {
+                                        calls = calls.map { entry ->
+                                            if (entry.id == call.id) entry.copy(recordingFileName = null) else entry
+                                        }
+                                    }
+                                )
                             }
                         }
                     }
@@ -1894,7 +1901,12 @@ private fun CallDateHeader(timestamp: Long, callCount: Int) {
 }
 
 @Composable
-private fun CallHistoryCard(call: CallEntry) {
+private fun CallHistoryCard(
+    call: CallEntry,
+    onRecordingDeleted: () -> Unit
+) {
+    var showDeleteConfirmation by remember(call.id) { mutableStateOf(false) }
+    val context = LocalContext.current
     val incoming = call.type == CallLog.Calls.INCOMING_TYPE
     val outgoing = call.type == CallLog.Calls.OUTGOING_TYPE
     val missed = call.type == CallLog.Calls.MISSED_TYPE
@@ -2067,6 +2079,17 @@ private fun CallHistoryCard(call: CallEntry) {
                         ) {
                             Icon(Icons.Default.Share, contentDescription = "Share recording", tint = Blue, modifier = Modifier.size(18.dp))
                         }
+                        IconButton(
+                            onClick = { showDeleteConfirmation = true },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "Delete recording",
+                                tint = Color(0xFFD64545),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
 
                     }
                 }
@@ -2079,6 +2102,30 @@ private fun CallHistoryCard(call: CallEntry) {
                 fontWeight = FontWeight.Medium
             )
         }
+    }
+    if (showDeleteConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text("Delete call recording?") },
+            text = { Text("The audio file will be permanently deleted. Call history will remain.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val file = call.recordingFileName?.let {
+                        RecordingStorage.getRecordingsFolder(context)?.resolve(it)
+                    }
+                    if (file != null && file.isFile && file.delete()) {
+                        CallHistoryDatabase.getInstance(context).unlinkRecording(call.id)
+                        onRecordingDeleted()
+                    } else {
+                        android.widget.Toast.makeText(context, "Could not delete recording", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    showDeleteConfirmation = false
+                }) { Text("Delete", color = Color(0xFFD64545)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmation = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 
