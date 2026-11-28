@@ -327,6 +327,15 @@ fun HomeScreen(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     HomeActionCard(
+                        title = "Phone Dialer",
+                        description = "Open keypad & make calls",
+                        icon = Icons.Default.Dialpad,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        context.startActivity(Intent(context, DialerActivity::class.java))
+                    }
+
+                    HomeActionCard(
                         title = "Call Activity",
                         description = "View call history",
                         icon = Icons.Default.Call,
