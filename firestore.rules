@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isGroupMember(groupId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/memberships/$(groupId + "_" + request.auth.uid))
+        && get(/databases/$(database)/documents/memberships/$(groupId + "_" + request.auth.uid)).data.status == "active";
+    }
+
+    function isGroupAdmin(groupId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/memberships/$(groupId + "_" + request.auth.uid))
+        && get(/databases/$(database)/documents/memberships/$(groupId + "_" + request.auth.uid)).data.status == "active"
+        && get(/databases/$(database)/documents/memberships/$(groupId + "_" + request.auth.uid)).data.role == "Admin";
+    }
+
+    match /familyGroups/{groupId} {
+      allow create: if signedIn()
+        && request.resource.data.creatorUid == request.auth.uid
+        && request.resource.data.adminUid == request.auth.uid
+        && request.resource.data.status == "active"
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 60
+        && getAfter(/databases/$(database)/documents/memberships/$(groupId + "_" + request.auth.uid)).data.role == "Admin";
+      allow get: if signedIn() && (
+        resource.data.creatorUid == request.auth.uid || isGroupMember(groupId)
+      );
+      allow list: if signedIn() && (
+        resource.data.creatorUid == request.auth.uid || isGroupMember(groupId)
+      );
+      allow update: if isGroupAdmin(groupId)
+        && request.resource.data.creatorUid == resource.data.creatorUid
+        && request.resource.data.adminUid == resource.data.adminUid;
+      allow delete: if false;
+    }
+
+    match /memberships/{membershipId} {
+      allow get, list: if signedIn() && (
+        resource.data.userId == request.auth.uid
+        || isGroupAdmin(resource.data.groupId)
+      );
+
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == "active"
+        && (
+          (
+            request.resource.data.role == "Admin"
+            && getAfter(/databases/$(database)/documents/familyGroups/$(request.resource.data.groupId)).data.creatorUid == request.auth.uid
+          )
+          ||
+          (
+            request.resource.data.role == "Member"
+            && request.resource.data.invitationId is string
+            && getAfter(/databases/$(database)/documents/invitations/$(request.resource.data.invitationId)).data.groupId == request.resource.data.groupId
+            && getAfter(/databases/$(database)/documents/invitations/$(request.resource.data.invitationId)).data.acceptedByUid == request.auth.uid
+            && getAfter(/databases/$(database)/documents/invitations/$(request.resource.data.invitationId)).data.status == "accepted"
+          )
+        );
+
+      allow update: if signedIn()
+        && resource.data.userId != request.auth.uid
+        && isGroupAdmin(resource.data.groupId)
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.groupId == resource.data.groupId
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.status == "removed"
+        && request.resource.data.removedBy == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /invitations/{invitationId} {
+      allow get, list: if signedIn() && (
+        resource.data.recipientEmail == request.auth.token.email
+        || isGroupAdmin(resource.data.groupId)
+      );
+
+      allow create: if signedIn()
+        && request.resource.data.inviterUid == request.auth.uid
+        && request.resource.data.status == "pending"
+        && request.resource.data.role == "Member"
+        && request.resource.data.recipientEmail is string
+        && request.resource.data.recipientEmail.size() > 3
+        && isGroupAdmin(request.resource.data.groupId);
+
+      allow update: if signedIn()
+        && resource.data.status == "pending"
+        && resource.data.recipientEmail == request.auth.token.email
+        && request.resource.data.groupId == resource.data.groupId
+        && request.resource.data.recipientEmail == resource.data.recipientEmail
+        && request.resource.data.inviterUid == resource.data.inviterUid
+        && request.resource.data.status in ["accepted", "rejected"]
+        && request.resource.data.acceptedByUid == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /consents/{consentId} {
+      allow get, list: if signedIn() && (
+        resource.data.userId == request.auth.uid
+        || isGroupAdmin(resource.data.groupId)
+      );
+      allow create, update: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && isGroupMember(request.resource.data.groupId)
+        && consentId == request.resource.data.groupId + "_" + request.auth.uid
+        && request.resource.data.callDetails is bool
+        && request.resource.data.recordingDetails is bool
+        && request.resource.data.smsDetails is bool;
+      allow delete: if false;
+    }
+
+    // No other Firestore collections are client-accessible by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
