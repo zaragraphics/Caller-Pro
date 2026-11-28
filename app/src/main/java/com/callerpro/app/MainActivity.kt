@@ -1548,7 +1548,8 @@ private data class CallEntry(
     val number: String,
     val type: Int,
     val date: Long,
-    val durationSeconds: Long
+    val durationSeconds: Long,
+    val recordingFileName: String? = null
 )
 
 private enum class CallFilter(val label: String) {
@@ -1591,7 +1592,24 @@ fun ActivityScreen() {
                     syncError = syncResult.errorMessage
                 }
 
-                val savedRecords = CallHistoryDatabase.getInstance(context.applicationContext)
+                val historyDatabase = CallHistoryDatabase.getInstance(context.applicationContext)
+
+                // Retry linking recent recordings when the Activity screen is refreshed.
+                // This recovers if the phone-state receiver ran before the call-log row was ready.
+                val now = System.currentTimeMillis()
+                RecordingStorage.scanAudioFiles(context.applicationContext)
+                    .filter { file ->
+                        val ageMillis = now - file.lastModified()
+                        ageMillis in 0..(15 * 60 * 1000L) && file.length() > 1024L
+                    }
+                    .forEach { file ->
+                        historyDatabase.linkRecordingToNearestCall(
+                            recordingEndMillis = file.lastModified(),
+                            recordingFileName = file.name
+                        )
+                    }
+
+                val savedRecords = historyDatabase
                     .getAllCalls()
                     .take(500)
                     .map { record ->
@@ -1608,7 +1626,8 @@ fun ActivityScreen() {
                                 else -> CallLog.Calls.MISSED_TYPE
                             },
                             date = record.dateMillis,
-                            durationSeconds = record.durationSeconds
+                            durationSeconds = record.durationSeconds,
+                            recordingFileName = record.recordingFileName
                         )
                     }
 
@@ -1954,6 +1973,85 @@ private fun CallHistoryCard(call: CallEntry) {
                     color = MutedText,
                     fontSize = 11.sp
                 )
+
+                if (!call.recordingFileName.isNullOrBlank()) {
+                    Row(
+                        modifier = Modifier.padding(top = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Mic,
+                            contentDescription = "Recording available",
+                            tint = Color(0xFF159B63),
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            "Recording available",
+                            color = Color(0xFF159B63),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        val context = LocalContext.current
+                        var isPlaying by remember(call.recordingFileName) { mutableStateOf(false) }
+                        var player by remember(call.recordingFileName) {
+                            mutableStateOf<android.media.MediaPlayer?>(null)
+                        }
+                        val recordingFile = remember(call.recordingFileName) {
+                            call.recordingFileName?.let { fileName ->
+                                RecordingStorage.getRecordingsFolder(context)?.resolve(fileName)
+                            }
+                        }
+                        DisposableEffect(call.recordingFileName) {
+                            onDispose {
+                                try { player?.release() } catch (_: Exception) {}
+                                player = null
+                            }
+                        }
+                        IconButton(
+                            onClick = {
+                                val activePlayer = player
+                                if (activePlayer != null) {
+                                    if (isPlaying) {
+                                        activePlayer.pause()
+                                        isPlaying = false
+                                    } else {
+                                        activePlayer.start()
+                                        isPlaying = true
+                                    }
+                                } else {
+                                    val file = recordingFile
+                                    if (file != null && file.exists()) {
+                                        try {
+                                            val newPlayer = android.media.MediaPlayer()
+                                            newPlayer.setDataSource(file.absolutePath)
+                                            newPlayer.setOnCompletionListener {
+                                                isPlaying = false
+                                                try { it.release() } catch (_: Exception) {}
+                                                player = null
+                                            }
+                                            newPlayer.prepare()
+                                            newPlayer.start()
+                                            player = newPlayer
+                                            isPlaying = true
+                                        } catch (_: Exception) {
+                                            isPlaying = false
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause recording" else "Play recording",
+                                tint = Blue,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                    }
+                }
             }
 
             Text(
