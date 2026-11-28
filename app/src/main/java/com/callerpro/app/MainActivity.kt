@@ -1612,6 +1612,7 @@ fun ActivityScreen() {
                     .take(500)
                     .map { record ->
                         CallEntry(
+                            id = record.id,
                             name = record.name,
                             number = record.number,
                             type = when (record.type) {
