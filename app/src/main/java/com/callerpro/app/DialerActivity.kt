@@ -24,31 +24,70 @@ class DialerActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(28, 36, 28, 28)
+            setPadding(24, 28, 24, 24)
         }
         root.addView(TextView(this).apply {
             text = "Caller Pro Dialer"
             textSize = 25f
+            gravity = Gravity.CENTER
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
         number = EditText(this).apply {
             hint = "Enter phone number"
-            textSize = 22f
+            textSize = 24f
+            gravity = Gravity.CENTER
             inputType = InputType.TYPE_CLASS_PHONE
             setSingleLine(true)
+            showSoftInputOnFocus = false
             intent?.data?.schemeSpecificPart?.let { setText(it) }
         }
         root.addView(number, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        val keypad = listOf(
+            listOf("1", "2", "3"),
+            listOf("4", "5", "6"),
+            listOf("7", "8", "9"),
+            listOf("*", "0", "#")
+        )
+        keypad.forEach { rowKeys ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+            }
+            rowKeys.forEach { key ->
+                row.addView(Button(this).apply {
+                    text = key
+                    textSize = 22f
+                    setOnClickListener {
+                        val end = number.selectionStart.coerceAtLeast(0)
+                        number.text.insert(end, key)
+                    }
+                }, LinearLayout.LayoutParams(0, 58, 1f).apply {
+                    setMargins(5, 3, 5, 3)
+                })
+            }
+            root.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        actions.addView(Button(this).apply {
+            text = "Delete"
+            setOnClickListener {
+                val end = number.selectionStart.coerceAtLeast(0)
+                if (end > 0) number.text.delete(end - 1, end)
+            }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        actions.addView(Button(this).apply {
+            text = "Call"
+            setOnClickListener { placeCall() }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(actions)
         root.addView(Button(this).apply {
             text = "Set as default phone app"
             setOnClickListener { requestDefaultDialerRole() }
-        })
-        root.addView(Button(this).apply {
-            text = "Call"
-            setOnClickListener { placeCall() }
-        })
-        root.addView(Button(this).apply {
-            text = "Clear"
-            setOnClickListener { number.text.clear() }
         })
         setContentView(root)
     }
@@ -71,7 +110,7 @@ class DialerActivity : Activity() {
                 }
                 startActivityForResult(changeIntent, REQUEST_DIALER_ROLE)
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             android.widget.Toast.makeText(this, "Unable to open default phone app settings", android.widget.Toast.LENGTH_LONG).show()
         }
     }
@@ -85,9 +124,9 @@ class DialerActivity : Activity() {
         val telecom = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
         try {
             telecom.placeCall(Uri.fromParts("tel", dialString, null), Bundle())
-        } catch (e: SecurityException) {
+        } catch (_: SecurityException) {
             number.error = "Phone permission is required"
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             number.error = "Unable to start call"
         }
     }
