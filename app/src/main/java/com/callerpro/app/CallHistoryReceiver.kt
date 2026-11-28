@@ -3,13 +3,15 @@ package com.callerpro.app
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 
 class CallHistoryReceiver : BroadcastReceiver() {
 
     companion object {
         private const val PREFS_NAME = "caller_pro_call_state"
-        private const val KEY_CALL_IN_PROGRESS = "call_in_progress"
+        private const val KEY_ACTIVE_SUBSCRIPTIONS = "active_call_subscriptions"
+        private const val KEY_UNKNOWN_CALL_IN_PROGRESS = "unknown_subscription_call_in_progress"
         private const val RECORDING_LOOKBACK_MILLIS = 15 * 60 * 1000L
     }
 
@@ -20,6 +22,10 @@ class CallHistoryReceiver : BroadcastReceiver() {
 
         val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
             ?: return
+        val subscriptionId = intent.getIntExtra(
+            SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX,
+            SubscriptionManager.INVALID_SUBSCRIPTION_ID
+        )
 
         val preferences = context.getSharedPreferences(
             PREFS_NAME,
@@ -29,22 +35,47 @@ class CallHistoryReceiver : BroadcastReceiver() {
         when (state) {
             TelephonyManager.EXTRA_STATE_RINGING,
             TelephonyManager.EXTRA_STATE_OFFHOOK -> {
-                preferences.edit()
-                    .putBoolean(KEY_CALL_IN_PROGRESS, true)
-                    .apply()
+                if (subscriptionId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                    val active = preferences.getStringSet(
+                        KEY_ACTIVE_SUBSCRIPTIONS,
+                        emptySet()
+                    )?.toMutableSet() ?: mutableSetOf()
+                    active.add(subscriptionId.toString())
+                    preferences.edit()
+                        .putStringSet(KEY_ACTIVE_SUBSCRIPTIONS, active)
+                        .apply()
+                } else {
+                    preferences.edit()
+                        .putBoolean(KEY_UNKNOWN_CALL_IN_PROGRESS, true)
+                        .apply()
+                }
             }
 
             TelephonyManager.EXTRA_STATE_IDLE -> {
-                val wasInCall = preferences.getBoolean(
-                    KEY_CALL_IN_PROGRESS,
-                    false
-                )
+                val active = preferences.getStringSet(
+                    KEY_ACTIVE_SUBSCRIPTIONS,
+                    emptySet()
+                )?.toMutableSet() ?: mutableSetOf()
 
-                if (!wasInCall) return
+                if (subscriptionId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                    active.remove(subscriptionId.toString())
+                } else {
+                    preferences.edit()
+                        .putBoolean(KEY_UNKNOWN_CALL_IN_PROGRESS, false)
+                        .apply()
+                }
 
                 preferences.edit()
-                    .putBoolean(KEY_CALL_IN_PROGRESS, false)
+                    .putStringSet(KEY_ACTIVE_SUBSCRIPTIONS, active)
                     .apply()
+
+                val unknownCallActive = preferences.getBoolean(
+                    KEY_UNKNOWN_CALL_IN_PROGRESS,
+                    false
+                )
+                // One SIM going idle must not trigger final sync while another
+                // subscription still has an active or ringing call.
+                if (active.isNotEmpty() || unknownCallActive) return
 
                 val pendingResult = goAsync()
                 val appContext = context.applicationContext
