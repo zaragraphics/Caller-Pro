@@ -16,6 +16,7 @@ import android.os.Looper
 import android.telephony.PhoneStateListener
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
+import android.telephony.TelephonyCallback
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -38,7 +39,8 @@ class CallRecordingService : Service() {
 
     private var recorder: MediaRecorder? = null
     private var outputFile: File? = null
-    private val telephonyListeners = mutableMapOf<Int, Pair<TelephonyManager, PhoneStateListener>>()
+    private val legacyTelephonyListeners = mutableMapOf<Int, Pair<TelephonyManager, PhoneStateListener>>()
+    private val telephonyCallbacks = mutableMapOf<Int, Pair<TelephonyManager, TelephonyCallback>>()
     private val activeSubscriptionCalls = mutableSetOf<Int>()
     private var recordingStarted = false
     private var lastRecordingSaved: Boolean? = null
@@ -92,7 +94,7 @@ class CallRecordingService : Service() {
             return START_NOT_STICKY
         }
 
-        if (telephonyListeners.isNotEmpty()) return START_NOT_STICKY
+        if (legacyTelephonyListeners.isNotEmpty() || telephonyCallbacks.isNotEmpty()) return START_NOT_STICKY
 
         if (!hasPermission(android.Manifest.permission.RECORD_AUDIO) ||
             !hasPermission(android.Manifest.permission.READ_PHONE_STATE)
@@ -140,8 +142,7 @@ class CallRecordingService : Service() {
             emptyList()
         }
 
-        // Register one listener per active SIM. A single default-subscription
-        // listener can miss calls placed on the other SIM.
+        // Keep one registration per active SIM so dual-SIM calls are tracked independently.
         val targets = if (subscriptionIds.isNotEmpty()) {
             subscriptionIds.map { it to defaultManager.createForSubscriptionId(it) }
         } else {
@@ -152,43 +153,35 @@ class CallRecordingService : Service() {
 
         for ((subscriptionId, manager) in targets) {
             try {
-                val listener = object : PhoneStateListener() {
-                    override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                        when (state) {
-                            TelephonyManager.CALL_STATE_OFFHOOK -> {
-                                activeSubscriptionCalls.add(subscriptionId)
-                                if (!recordingStarted) startRecording()
-                            }
-                            TelephonyManager.CALL_STATE_IDLE -> {
-                                activeSubscriptionCalls.remove(subscriptionId)
-                                // Do not stop a recording while another SIM
-                                // still has an active cellular call.
-                                if (activeSubscriptionCalls.isEmpty() && recordingStarted) {
-                                    stopRecording()
-                                    val resultMessage = when {
-                                        lastRecordingSaved == false -> "Recording failed • no usable audio file was saved"
-                                        lastRecordingSaved == true && lastRecordingDetectedAudio == true -> "Recording saved • microphone signal detected"
-                                        lastRecordingSaved == true -> "Recording saved • no microphone signal detected"
-                                        else -> "Monitoring enabled • ready for next call"
-                                    }
-                                    getSystemService(NotificationManager::class.java).notify(
-                                        NOTIFICATION_ID,
-                                        buildNotification(resultMessage)
-                                    )
-                                }
-                            }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val callback = object : TelephonyCallback(),
+                        TelephonyCallback.CallStateListener {
+                        override fun onCallStateChanged(state: Int) {
+                            handleCallStateChanged(subscriptionId, state)
                         }
                     }
+                    telephonyCallbacks[subscriptionId] = manager to callback
+                    manager.registerTelephonyCallback(mainExecutor, callback)
+                } else {
+                    @Suppress("DEPRECATION")
+                    val listener = object : PhoneStateListener() {
+                        @Deprecated("Deprecated in Android 12; retained for API 26–30 compatibility")
+                        override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                            handleCallStateChanged(subscriptionId, state)
+                        }
+                    }
+                    legacyTelephonyListeners[subscriptionId] = manager to listener
+                    @Suppress("DEPRECATION")
+                    manager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
                 }
-                telephonyListeners[subscriptionId] = manager to listener
-                manager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
             } catch (_: Exception) {
-                telephonyListeners.remove(subscriptionId)
+                legacyTelephonyListeners.remove(subscriptionId)
+                telephonyCallbacks.remove(subscriptionId)
                 failedSubscriptionCount++
             }
         }
 
-        if (telephonyListeners.isEmpty()) {
+        if (legacyTelephonyListeners.isEmpty() && telephonyCallbacks.isEmpty()) {
             throw IllegalStateException("Unable to register call-state listeners")
         }
 
@@ -199,6 +192,32 @@ class CallRecordingService : Service() {
                     "Monitoring limited • unable to monitor $failedSubscriptionCount SIM subscription(s)"
                 )
             )
+        }
+    }
+
+    private fun handleCallStateChanged(subscriptionId: Int, state: Int) {
+        when (state) {
+            TelephonyManager.CALL_STATE_OFFHOOK -> {
+                activeSubscriptionCalls.add(subscriptionId)
+                if (!recordingStarted) startRecording()
+            }
+            TelephonyManager.CALL_STATE_IDLE -> {
+                activeSubscriptionCalls.remove(subscriptionId)
+                // Keep the shared recorder alive until every monitored SIM is idle.
+                if (activeSubscriptionCalls.isEmpty() && recordingStarted) {
+                    stopRecording()
+                    val resultMessage = when {
+                        lastRecordingSaved == false -> "Recording failed • no usable audio file was saved"
+                        lastRecordingSaved == true && lastRecordingDetectedAudio == true -> "Recording saved • microphone signal detected"
+                        lastRecordingSaved == true -> "Recording saved • no microphone signal detected"
+                        else -> "Monitoring enabled • ready for next call"
+                    }
+                    getSystemService(NotificationManager::class.java).notify(
+                        NOTIFICATION_ID,
+                        buildNotification(resultMessage)
+                    )
+                }
+            }
         }
     }
 
@@ -318,13 +337,24 @@ class CallRecordingService : Service() {
     }
 
     private fun unregisterCallStateListeners() {
-        telephonyListeners.values.forEach { (manager, listener) ->
+        legacyTelephonyListeners.values.forEach { (manager, listener) ->
             try {
+                @Suppress("DEPRECATION")
                 manager.listen(listener, PhoneStateListener.LISTEN_NONE)
             } catch (_: Exception) {
             }
         }
-        telephonyListeners.clear()
+        legacyTelephonyListeners.clear()
+
+        telephonyCallbacks.values.forEach { (manager, callback) ->
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    manager.unregisterTelephonyCallback(callback)
+                }
+            } catch (_: Exception) {
+            }
+        }
+        telephonyCallbacks.clear()
         activeSubscriptionCalls.clear()
     }
 
