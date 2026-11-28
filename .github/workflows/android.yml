@@ -1,8 +1,8 @@
-
 name: Build Caller Pro APK
-# APK builds are manual only to avoid repeated GitHub Actions builds.
-
+# Build on updates to the active development branch and allow manual runs.
 on:
+  push:
+    branches: [batch-1-recording-engine]
   workflow_dispatch:
 
 permissions:
