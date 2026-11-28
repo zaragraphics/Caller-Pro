@@ -228,32 +228,42 @@ class CallHistoryDatabase private constructor(
             put(COL_RECORDING, recordingFileName)
         }
 
+        // Never replace a recording that has already been linked to this call.
         return writableDatabase.update(
             TABLE_CALLS,
             values,
-            "$COL_ID = ?",
+            "$COL_ID = ? AND $COL_RECORDING IS NULL",
             arrayOf(callId.toString())
         ) > 0
     }
 
+    /**
+     * Links a finished recording to the closest eligible call by comparing
+     * the recording's last-modified time with the call's estimated end time.
+     * CallLog.DATE is the call start time, so duration must be included.
+     */
     @Synchronized
     fun linkRecordingToNearestCall(
-        callDateMillis: Long,
+        recordingEndMillis: Long,
         recordingFileName: String,
-        maxDifferenceMillis: Long = 10 * 60 * 1000L
+        maxDifferenceMillis: Long = 3 * 60 * 1000L
     ): Boolean {
         val nearestCallId = readableDatabase.rawQuery(
             """
             SELECT $COL_ID
             FROM $TABLE_CALLS
-            WHERE ABS($COL_DATE - ?) <= ?
-            ORDER BY ABS($COL_DATE - ?) ASC
+            WHERE $COL_RECORDING IS NULL
+              AND $COL_DURATION > 0
+              AND $COL_TYPE IN ('Incoming', 'Outgoing')
+              AND ABS(($COL_DATE + ($COL_DURATION * 1000)) - ?) <= ?
+            ORDER BY ABS(($COL_DATE + ($COL_DURATION * 1000)) - ?) ASC,
+                     $COL_DATE DESC
             LIMIT 1
             """.trimIndent(),
             arrayOf(
-                callDateMillis.toString(),
+                recordingEndMillis.toString(),
                 maxDifferenceMillis.toString(),
-                callDateMillis.toString()
+                recordingEndMillis.toString()
             )
         ).use { cursor ->
             if (cursor.moveToFirst()) cursor.getLong(0) else null
