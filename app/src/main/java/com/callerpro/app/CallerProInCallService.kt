@@ -11,6 +11,8 @@ import android.os.Build
 import android.util.Log
 
 class CallerProInCallService : InCallService() {
+    private val trackedCalls = mutableListOf<Call>()
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -19,23 +21,44 @@ class CallerProInCallService : InCallService() {
 
     override fun onCallAdded(call: Call) {
         super.onCallAdded(call)
-        activeCall = call
-        call.registerCallback(callback)
-        showCallNotification(call)
+        if (trackedCalls.none { it === call }) {
+            trackedCalls.add(call)
+            call.registerCallback(callback)
+        }
+        refreshForegroundCall()
         openCallScreen()
     }
 
     override fun onCallRemoved(call: Call) {
         call.unregisterCallback(callback)
-        if (activeCall === call) activeCall = null
-        getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+        trackedCalls.removeAll { it === call }
+        refreshForegroundCall()
         super.onCallRemoved(call)
     }
 
     private val callback = object : Call.Callback() {
         override fun onStateChanged(call: Call, state: Int) {
-            showCallNotification(call)
-            InCallActivity.refreshRequested = true
+            refreshForegroundCall()
+        }
+    }
+
+    /**
+     * Keep a stable foreground call for the UI when Android reports call waiting,
+     * a held call, or a second call. Prefer a connected call, then ringing/dialing.
+     */
+    private fun refreshForegroundCall() {
+        val selected = trackedCalls.firstOrNull { it.state == Call.STATE_ACTIVE }
+            ?: trackedCalls.firstOrNull { it.state == Call.STATE_RINGING }
+            ?: trackedCalls.firstOrNull { it.state == Call.STATE_DIALING }
+            ?: trackedCalls.firstOrNull { it.state == Call.STATE_CONNECTING }
+            ?: trackedCalls.firstOrNull { it.state == Call.STATE_HOLDING }
+            ?: trackedCalls.firstOrNull { it.state != Call.STATE_DISCONNECTED }
+
+        activeCall = selected
+        if (selected == null) {
+            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+        } else {
+            showCallNotification(selected)
         }
     }
 
@@ -70,7 +93,14 @@ class CallerProInCallService : InCallService() {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
         }.setSmallIcon(android.R.drawable.sym_action_call)
-            .setContentTitle(if (call.state == Call.STATE_RINGING) "Incoming call" else "Caller Pro call")
+            .setContentTitle(
+                when (call.state) {
+                    Call.STATE_RINGING -> "Incoming call"
+                    Call.STATE_DIALING, Call.STATE_CONNECTING -> "Calling…"
+                    Call.STATE_HOLDING -> "Call on hold"
+                    else -> "Caller Pro call"
+                }
+            )
             .setContentText("Tap to open call controls")
             .setCategory(Notification.CATEGORY_CALL)
             .setPriority(Notification.PRIORITY_MAX)
@@ -82,6 +112,9 @@ class CallerProInCallService : InCallService() {
     }
 
     override fun onDestroy() {
+        trackedCalls.forEach { it.unregisterCallback(callback) }
+        trackedCalls.clear()
+        activeCall = null
         if (instance === this) instance = null
         super.onDestroy()
     }
@@ -90,8 +123,10 @@ class CallerProInCallService : InCallService() {
         private const val TAG = "CallerProInCall"
         private const val CHANNEL_ID = "caller_pro_calls"
         private const val NOTIFICATION_ID = 7301
+
         @Volatile var instance: CallerProInCallService? = null
             private set
+
         @Volatile var activeCall: Call? = null
             private set
     }
