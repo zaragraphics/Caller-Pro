@@ -1594,19 +1594,22 @@ fun ActivityScreen() {
 
                 val historyDatabase = CallHistoryDatabase.getInstance(context.applicationContext)
 
-                // Retry linking recent recordings when the Activity screen is refreshed.
-                // This recovers if the phone-state receiver ran before the call-log row was ready.
-                val now = System.currentTimeMillis()
+                // Reconcile existing files too, so older recordings can appear in Call History
+                // after a previous phone-state broadcast or call-log sync was missed.
+                val alreadyLinkedFiles = historyDatabase.getAllCalls()
+                    .mapNotNull { it.recordingFileName }
+                    .toMutableSet()
                 RecordingStorage.scanAudioFiles(context.applicationContext)
-                    .filter { file ->
-                        val ageMillis = now - file.lastModified()
-                        ageMillis in 0..(15 * 60 * 1000L) && file.length() > 1024L
-                    }
+                    .filter { file -> file.length() > 1024L && file.name !in alreadyLinkedFiles }
+                    .sortedByDescending { it.lastModified() }
                     .forEach { file ->
-                        historyDatabase.linkRecordingToNearestCall(
-                            recordingEndMillis = file.lastModified(),
-                            recordingFileName = file.name
-                        )
+                        if (historyDatabase.linkRecordingToNearestCall(
+                                recordingEndMillis = file.lastModified(),
+                                recordingFileName = file.name
+                            )
+                        ) {
+                            alreadyLinkedFiles.add(file.name)
+                        }
                     }
 
                 val savedRecords = historyDatabase
