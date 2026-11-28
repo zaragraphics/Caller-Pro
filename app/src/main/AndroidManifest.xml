@@ -43,6 +43,10 @@
             android:foregroundServiceType="microphone" />
 
         <activity
+            android:name=".RecordingLibraryActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".MainActivity"
             android:exported="true">
 
