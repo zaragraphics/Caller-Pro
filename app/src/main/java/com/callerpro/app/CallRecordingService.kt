@@ -38,7 +38,9 @@ class CallRecordingService : Service() {
     }
 
     private var recorder: MediaRecorder? = null
+    // Recorder writes to a pending file; only validated recordings get the .m4a extension.
     private var outputFile: File? = null
+    private var finalOutputFile: File? = null
     private val legacyTelephonyListeners = mutableMapOf<Int, Pair<TelephonyManager, PhoneStateListener>>()
     private val telephonyCallbacks = mutableMapOf<Int, Pair<TelephonyManager, TelephonyCallback>>()
     private val activeSubscriptionCalls = mutableSetOf<Int>()
@@ -86,6 +88,16 @@ class CallRecordingService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        cleanupAbandonedRecordings()
+    }
+
+    private fun cleanupAbandonedRecordings() {
+        val folder = RecordingStorage.getRecordingsFolder(this) ?: return
+        folder.listFiles()
+            ?.filter { it.isFile && it.name.startsWith("CallerPro_") && it.name.endsWith(".m4a.pending") }
+            ?.forEach { file ->
+                try { file.delete() } catch (_: Exception) {}
+            }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -232,7 +244,8 @@ class CallRecordingService : Service() {
         }
         // Milliseconds prevent two calls started in the same second from colliding.
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
-        val file = File(folder, "CallerPro_$stamp.m4a")
+        val file = File(folder, "CallerPro_$stamp.m4a.pending")
+        val completedFile = File(folder, "CallerPro_$stamp.m4a")
         var candidate: MediaRecorder? = null
 
         try {
@@ -273,6 +286,7 @@ class CallRecordingService : Service() {
 
             recorder = candidate
             outputFile = file
+            finalOutputFile = completedFile
             recordingStarted = true
             silentSampleCount = 0
             recordingDetectedAudio = false
@@ -293,6 +307,7 @@ class CallRecordingService : Service() {
             recorder = null
             recordingStarted = false
             outputFile = null
+            finalOutputFile = null
             lastRecordingDetectedAudio = null
             lastRecordingSaved = false
             amplitudeHandler.removeCallbacks(amplitudeCheck)
@@ -307,7 +322,8 @@ class CallRecordingService : Service() {
     private fun stopRecording() {
         amplitudeHandler.removeCallbacks(amplitudeCheck)
         val currentRecorder = recorder
-        val completedFile = outputFile
+        val pendingFile = outputFile
+        val completedFile = finalOutputFile
         var stopSucceeded = false
         if (recordingStarted) {
             lastRecordingDetectedAudio = recordingDetectedAudio
@@ -325,13 +341,20 @@ class CallRecordingService : Service() {
             recorder = null
             recordingStarted = false
             outputFile = null
+            finalOutputFile = null
         }
 
-        // A successful stop can still produce an empty/truncated file on some devices.
-        val usableFile = stopSucceeded && !recorderReportedError &&
-            completedFile?.isFile == true && (completedFile.length() > 1024L)
-        lastRecordingSaved = usableFile
-        if (!usableFile) {
+        // Keep unfinished captures out of the library and call-history linker.
+        val validPendingFile = stopSucceeded && !recorderReportedError &&
+            pendingFile?.isFile == true && pendingFile.length() > 1024L
+        val finalized = validPendingFile &&
+            completedFile != null &&
+            !completedFile.exists() &&
+            try { pendingFile.renameTo(completedFile) } catch (_: Exception) { false }
+
+        lastRecordingSaved = finalized
+        if (!finalized) {
+            try { pendingFile?.delete() } catch (_: Exception) {}
             try { completedFile?.delete() } catch (_: Exception) {}
         }
     }
