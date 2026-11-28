@@ -2063,16 +2063,20 @@ private fun CallHistoryCard(
                         }
                         IconButton(
                             onClick = {
-                                try {
-                                    val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", recordingFile)
-                                    val send = Intent(Intent.ACTION_SEND).apply {
-                                        type = "audio/*"
-                                        putExtra(Intent.EXTRA_STREAM, uri)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                if (recordingFile == null || !recordingFile.exists()) {
+                                    android.widget.Toast.makeText(context, "Recording file not found", android.widget.Toast.LENGTH_SHORT).show()
+                                } else {
+                                    try {
+                                        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", recordingFile)
+                                        val send = Intent(Intent.ACTION_SEND).apply {
+                                            type = "audio/*"
+                                            putExtra(Intent.EXTRA_STREAM, uri)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(send, "Share call recording"))
+                                    } catch (_: Exception) {
+                                        android.widget.Toast.makeText(context, "Unable to share recording", android.widget.Toast.LENGTH_SHORT).show()
                                     }
-                                    context.startActivity(Intent.createChooser(send, "Share call recording"))
-                                } catch (_: Exception) {
-                                    android.widget.Toast.makeText(context, "Unable to share recording", android.widget.Toast.LENGTH_SHORT).show()
                                 }
                             },
                             modifier = Modifier.size(30.dp)
