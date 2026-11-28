@@ -41,6 +41,7 @@ class CallRecordingService : Service() {
     private var phoneListener: PhoneStateListener? = null
     private var callHasConnected = false
     private var recordingStarted = false
+    private var lastRecordingSaved: Boolean? = null
 
     private val amplitudeHandler = Handler(Looper.getMainLooper())
     private var silentSampleCount = 0
@@ -140,10 +141,11 @@ class CallRecordingService : Service() {
                         if (callHasConnected) {
                             stopRecording()
                             callHasConnected = false
-                            val resultMessage = when (lastRecordingDetectedAudio) {
-                                true -> "Recording saved • microphone signal detected"
-                                false -> "Recording saved • no microphone signal detected"
-                                null -> "Monitoring enabled • ready for next call"
+                            val resultMessage = when {
+                                lastRecordingSaved == false -> "Recording failed • no usable audio file was saved"
+                                lastRecordingSaved == true && lastRecordingDetectedAudio == true -> "Recording saved • microphone signal detected"
+                                lastRecordingSaved == true -> "Recording saved • no microphone signal detected"
+                                else -> "Monitoring enabled • ready for next call"
                             }
                             getSystemService(NotificationManager::class.java).notify(
                                 NOTIFICATION_ID,
@@ -162,7 +164,8 @@ class CallRecordingService : Service() {
     private fun startRecording() {
         if (!hasPermission(android.Manifest.permission.RECORD_AUDIO)) return
         val folder = RecordingStorage.getRecordingsFolder(this) ?: return
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        // Milliseconds prevent two calls started in the same second from colliding.
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val file = File(folder, "CallerPro_$stamp.m4a")
         var candidate: MediaRecorder? = null
 
@@ -190,6 +193,7 @@ class CallRecordingService : Service() {
             recordingDetectedAudio = false
             silenceWarningShown = false
             lastRecordingDetectedAudio = null
+            lastRecordingSaved = null
             amplitudeHandler.removeCallbacks(amplitudeCheck)
             amplitudeHandler.postDelayed(amplitudeCheck, AMPLITUDE_CHECK_INTERVAL_MS)
 
@@ -204,6 +208,7 @@ class CallRecordingService : Service() {
             recordingStarted = false
             outputFile = null
             lastRecordingDetectedAudio = null
+            lastRecordingSaved = false
             amplitudeHandler.removeCallbacks(amplitudeCheck)
             file.delete()
             getSystemService(NotificationManager::class.java).notify(
@@ -216,19 +221,32 @@ class CallRecordingService : Service() {
     private fun stopRecording() {
         amplitudeHandler.removeCallbacks(amplitudeCheck)
         val currentRecorder = recorder
+        val completedFile = outputFile
+        var stopSucceeded = false
         if (recordingStarted) {
             lastRecordingDetectedAudio = recordingDetectedAudio
         }
         try {
-            currentRecorder?.stop()
+            if (currentRecorder != null) {
+                currentRecorder.stop()
+                stopSucceeded = true
+            }
         } catch (_: Exception) {
-            outputFile?.delete()
+            stopSucceeded = false
         } finally {
             try { currentRecorder?.reset() } catch (_: Exception) {}
             try { currentRecorder?.release() } catch (_: Exception) {}
             recorder = null
             recordingStarted = false
             outputFile = null
+        }
+
+        // A successful stop can still produce an empty/truncated file on some devices.
+        val usableFile = stopSucceeded && completedFile?.isFile == true &&
+            (completedFile.length() > 1024L)
+        lastRecordingSaved = usableFile
+        if (!usableFile) {
+            try { completedFile?.delete() } catch (_: Exception) {}
         }
     }
 
