@@ -162,8 +162,14 @@ class CallRecordingService : Service() {
     }
 
     private fun startRecording() {
-        if (!hasPermission(android.Manifest.permission.RECORD_AUDIO)) return
-        val folder = RecordingStorage.getRecordingsFolder(this) ?: return
+        if (!hasPermission(android.Manifest.permission.RECORD_AUDIO)) {
+            lastRecordingSaved = false
+            return
+        }
+        val folder = RecordingStorage.getRecordingsFolder(this) ?: run {
+            lastRecordingSaved = false
+            return
+        }
         // Milliseconds prevent two calls started in the same second from colliding.
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val file = File(folder, "CallerPro_$stamp.m4a")
