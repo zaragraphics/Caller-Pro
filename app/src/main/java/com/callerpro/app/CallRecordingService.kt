@@ -221,10 +221,13 @@ class CallRecordingService : Service() {
             }
         }
 
-        // Removed SIM listeners are retained while their call is marked active, so an
-        // in-progress shared recording is not stopped merely because a SIM was removed.
+        // A subscription disappearing means its cellular call can no longer remain active.
+        // Clear that subscription's active marker to avoid a recorder being left running forever
+        // when Android does not deliver a final IDLE callback for a physically removed SIM.
         val currentIds = targets.keys
-        val staleIds = registeredIds.filter { it !in currentIds && it !in activeSubscriptionCalls }
+        val removedActiveIds = activeSubscriptionCalls.filter { it !in currentIds }
+        activeSubscriptionCalls.removeAll(removedActiveIds.toSet())
+        val staleIds = registeredIds.filter { it !in currentIds }
         for (subscriptionId in staleIds) {
             legacyTelephonyListeners.remove(subscriptionId)?.let { (telephonyManager, listener) ->
                 try {
@@ -243,6 +246,20 @@ class CallRecordingService : Service() {
 
         if (legacyTelephonyListeners.isEmpty() && telephonyCallbacks.isEmpty()) {
             throw IllegalStateException("Unable to register call-state listeners")
+        }
+
+        if (removedActiveIds.isNotEmpty() && activeSubscriptionCalls.isEmpty() && recordingStarted) {
+            stopRecording()
+            getSystemService(NotificationManager::class.java).notify(
+                NOTIFICATION_ID,
+                buildNotification(
+                    if (lastRecordingSaved == true) {
+                        "Call ended after SIM change • recording saved"
+                    } else {
+                        "Call ended after SIM change • recording could not be saved"
+                    }
+                )
+            )
         }
     }
 
