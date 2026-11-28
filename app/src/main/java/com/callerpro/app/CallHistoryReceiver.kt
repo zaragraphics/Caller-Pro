@@ -72,12 +72,14 @@ class CallHistoryReceiver : BroadcastReceiver() {
         val folder = RecordingStorage.getRecordingsFolder(context)
             ?: return
 
+        val now = System.currentTimeMillis()
         val files = folder.listFiles()
             ?.filter { file ->
+                val ageMillis = now - file.lastModified()
                 file.isFile &&
                     file.extension.equals("m4a", ignoreCase = true) &&
-                    System.currentTimeMillis() - file.lastModified() <=
-                    RECORDING_LOOKBACK_MILLIS
+                    file.length() > 1024L &&
+                    ageMillis in 0..RECORDING_LOOKBACK_MILLIS
             }
             ?.sortedByDescending { it.lastModified() }
             ?: return
@@ -92,8 +94,10 @@ class CallHistoryReceiver : BroadcastReceiver() {
         for (file in files) {
             if (file.name in alreadyLinked) continue
 
+            // MediaRecorder finalizes the file when the call ends. Match that
+            // timestamp to CallLog.DATE + DURATION, not to the call start time.
             database.linkRecordingToNearestCall(
-                callDateMillis = file.lastModified(),
+                recordingEndMillis = file.lastModified(),
                 recordingFileName = file.name
             )
         }
