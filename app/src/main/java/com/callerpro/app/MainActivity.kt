@@ -321,81 +321,7 @@ fun HomeScreen(
                 Text("Choose what you want to open", fontSize = 12.sp, color = MutedText)
                 Spacer(Modifier.height(15.dp))
 
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White)
-                ) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Mic, contentDescription = null, tint = Blue)
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    if (monitorEnabled) "Call monitoring enabled" else "Automatic call monitoring",
-                                    color = AppText,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                                Text(
-                                    if (monitorEnabled) "An ongoing notification is active" else "Turn it on only when you want Caller Pro to monitor calls",
-                                    color = MutedText,
-                                    fontSize = 11.sp
-                                )
-                            }
-                            if (monitorEnabled) {
-                                Icon(Icons.Default.CheckCircle, contentDescription = "Enabled", tint = Color(0xFF159B63))
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            "Recording uses the phone microphone. Android and device restrictions may prevent the other caller's voice from being captured.",
-                            color = MutedText,
-                            fontSize = 11.sp
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        if (monitorEnabled) {
-                            OutlinedButton(
-                                onClick = {
-                                    context.startService(
-                                        Intent(context, CallRecordingService::class.java).apply {
-                                            action = CallRecordingService.ACTION_STOP
-                                        }
-                                    )
-                                    monitorEnabled = false
-                                    recordingPrefs.edit()
-                                        .putBoolean(CallRecordingService.PREF_MONITOR_ENABLED, false)
-                                        .apply()
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Default.Stop, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Stop monitoring")
-                            }
-                        } else {
-                            Button(
-                                onClick = {
-                                    val missing = requiredRecordingPermissions.filter { permission ->
-                                        ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
-                                    }
-                                    if (missing.isEmpty()) {
-                                        startMonitorAfterPermission()
-                                    } else {
-                                        recordingPermissionLauncher.launch(missing.toTypedArray())
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(containerColor = Blue),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(Icons.Default.Mic, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Enable call monitoring")
-                            }
-                        }
-                    }
-                }
+                Spacer(Modifier.height(15.dp))
 
                 Spacer(Modifier.height(15.dp))
 
@@ -459,6 +385,65 @@ fun HomeScreen(
                             Text("You control what is shared with family", color = MutedText, fontSize = 11.sp)
                         }
                         Icon(Icons.Default.ChevronRight, null, tint = MutedText)
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Mic, contentDescription = null, tint = Blue, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Call recording", color = AppText, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Text(
+                                if (monitorEnabled) "Monitoring is on" else "Monitoring is off",
+                                color = if (monitorEnabled) Color(0xFF159B63) else MutedText,
+                                fontSize = 11.sp
+                            )
+                        }
+                        if (monitorEnabled) {
+                            TextButton(
+                                onClick = {
+                                    context.startService(
+                                        Intent(context, CallRecordingService::class.java).apply {
+                                            action = CallRecordingService.ACTION_STOP
+                                        }
+                                    )
+                                    monitorEnabled = false
+                                    recordingPrefs.edit()
+                                        .putBoolean(CallRecordingService.PREF_MONITOR_ENABLED, false)
+                                        .apply()
+                                }
+                            ) {
+                                Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Stop")
+                            }
+                        } else {
+                            TextButton(
+                                onClick = {
+                                    val missing = requiredRecordingPermissions.filter { permission ->
+                                        ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
+                                    }
+                                    if (missing.isEmpty()) {
+                                        startMonitorAfterPermission()
+                                    } else {
+                                        recordingPermissionLauncher.launch(missing.toTypedArray())
+                                    }
+                                }
+                            ) {
+                                Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Enable")
+                            }
+                        }
                     }
                 }
 
