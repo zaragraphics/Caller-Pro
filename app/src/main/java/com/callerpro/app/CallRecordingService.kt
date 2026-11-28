@@ -42,6 +42,7 @@ class CallRecordingService : Service() {
     private val activeSubscriptionCalls = mutableSetOf<Int>()
     private var recordingStarted = false
     private var lastRecordingSaved: Boolean? = null
+    @Volatile private var recorderReportedError = false
 
     private val amplitudeHandler = Handler(Looper.getMainLooper())
     private var silentSampleCount = 0
@@ -211,6 +212,25 @@ class CallRecordingService : Service() {
                 MediaRecorder()
             }
 
+            candidate.setOnErrorListener { _, what, extra ->
+                recorderReportedError = true
+                getSystemService(NotificationManager::class.java).notify(
+                    NOTIFICATION_ID,
+                    buildNotification("Recording error • Android audio capture stopped (code $what/$extra)")
+                )
+            }
+            candidate.setOnInfoListener { _, what, extra ->
+                if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED ||
+                    what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED
+                ) {
+                    recorderReportedError = true
+                    getSystemService(NotificationManager::class.java).notify(
+                        NOTIFICATION_ID,
+                        buildNotification("Recording limit reached • this recording may be incomplete")
+                    )
+                }
+            }
+
             candidate.setAudioSource(MediaRecorder.AudioSource.MIC)
             candidate.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             candidate.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
@@ -228,6 +248,7 @@ class CallRecordingService : Service() {
             silenceWarningShown = false
             lastRecordingDetectedAudio = null
             lastRecordingSaved = null
+            recorderReportedError = false
             amplitudeHandler.removeCallbacks(amplitudeCheck)
             amplitudeHandler.postDelayed(amplitudeCheck, AMPLITUDE_CHECK_INTERVAL_MS)
 
@@ -276,8 +297,8 @@ class CallRecordingService : Service() {
         }
 
         // A successful stop can still produce an empty/truncated file on some devices.
-        val usableFile = stopSucceeded && completedFile?.isFile == true &&
-            (completedFile.length() > 1024L)
+        val usableFile = stopSucceeded && !recorderReportedError &&
+            completedFile?.isFile == true && (completedFile.length() > 1024L)
         lastRecordingSaved = usableFile
         if (!usableFile) {
             try { completedFile?.delete() } catch (_: Exception) {}
