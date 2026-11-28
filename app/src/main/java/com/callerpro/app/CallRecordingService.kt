@@ -148,6 +148,8 @@ class CallRecordingService : Service() {
             listOf(SubscriptionManager.INVALID_SUBSCRIPTION_ID to defaultManager)
         }
 
+        var failedSubscriptionCount = 0
+
         for ((subscriptionId, manager) in targets) {
             try {
                 val listener = object : PhoneStateListener() {
@@ -182,11 +184,21 @@ class CallRecordingService : Service() {
                 manager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
             } catch (_: Exception) {
                 telephonyListeners.remove(subscriptionId)
+                failedSubscriptionCount++
             }
         }
 
         if (telephonyListeners.isEmpty()) {
             throw IllegalStateException("Unable to register call-state listeners")
+        }
+
+        if (failedSubscriptionCount > 0) {
+            getSystemService(NotificationManager::class.java).notify(
+                NOTIFICATION_ID,
+                buildNotification(
+                    "Monitoring limited • unable to monitor $failedSubscriptionCount SIM subscription(s)"
+                )
+            )
         }
     }
 
