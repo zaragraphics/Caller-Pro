@@ -39,6 +39,7 @@ object RecordingStorage {
         return folder.listFiles()
             ?.filter {
                 it.isFile &&
+                it.length() > 1024L &&
                 it.extension.lowercase() in extensions
             }
             ?.sortedByDescending { it.lastModified() }
