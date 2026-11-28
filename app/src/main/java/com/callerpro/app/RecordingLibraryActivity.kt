@@ -229,6 +229,8 @@ private fun RecordingLibraryScreen(onBack: () -> Unit) {
                 TextButton(onClick = {
                     if (playingFile == target) stopPlayer()
                     if (target.delete()) {
+                        CallHistoryDatabase.getInstance(context)
+                            .unlinkRecordingByFileName(target.name)
                         files.remove(target)
                         message = "Recording deleted."
                     } else {
