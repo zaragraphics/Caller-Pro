@@ -1986,115 +1986,156 @@ private fun CallHistoryCard(
                 )
 
                 if (!call.recordingFileName.isNullOrBlank()) {
-                    Row(
-                        modifier = Modifier.padding(top = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.Mic,
-                            contentDescription = "Recording available",
-                            tint = Color(0xFF159B63),
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(Modifier.width(5.dp))
-                        Text(
-                            "Recording available",
-                            color = Color(0xFF159B63),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(Modifier.width(5.dp))
-                        val context = LocalContext.current
-                        var isPlaying by remember(call.recordingFileName) { mutableStateOf(false) }
-                        var player by remember(call.recordingFileName) {
+                    val context = LocalContext.current
+                    val recordingFile = remember(call.recordingFileName) {
+                        call.recordingFileName?.let { fileName ->
+                            RecordingStorage.getRecordingsFolder(context)?.resolve(fileName)
+                        }
+                    }
+                    val recordingExists = recordingFile?.isFile == true
+                    if (recordingExists) {
+                        var isPlaying by remember(call.id, call.recordingFileName) { mutableStateOf(false) }
+                        var player by remember(call.id, call.recordingFileName) {
                             mutableStateOf<android.media.MediaPlayer?>(null)
                         }
-                        val recordingFile = remember(call.recordingFileName) {
-                            call.recordingFileName?.let { fileName ->
-                                RecordingStorage.getRecordingsFolder(context)?.resolve(fileName)
-                            }
-                        }
-                        DisposableEffect(call.recordingFileName) {
+                        DisposableEffect(call.id, call.recordingFileName) {
                             onDispose {
-                                try { player?.release() } catch (_: Exception) {}
+                                try {
+                                    player?.setOnCompletionListener(null)
+                                    player?.release()
+                                } catch (_: Exception) {}
                                 player = null
                             }
                         }
-                        IconButton(
-                            onClick = {
-                                val activePlayer = player
-                                if (activePlayer != null) {
-                                    if (isPlaying) {
-                                        activePlayer.pause()
-                                        isPlaying = false
-                                    } else {
-                                        activePlayer.start()
-                                        isPlaying = true
-                                    }
-                                } else {
-                                    val file = recordingFile
-                                    if (file != null && file.exists()) {
-                                        try {
-                                            val newPlayer = android.media.MediaPlayer()
-                                            newPlayer.setDataSource(file.absolutePath)
-                                            newPlayer.setOnCompletionListener {
-                                                isPlaying = false
-                                                try { it.release() } catch (_: Exception) {}
-                                                player = null
-                                            }
-                                            newPlayer.prepare()
-                                            newPlayer.start()
-                                            player = newPlayer
-                                            isPlaying = true
-                                        } catch (_: Exception) {
-                                            isPlaying = false
-                                        }
-                                    }
-                                }
-                            },
-                            modifier = Modifier.size(30.dp)
+                        Row(
+                            modifier = Modifier.padding(top = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause recording" else "Play recording",
-                                tint = Blue,
-                                modifier = Modifier.size(19.dp)
+                                Icons.Default.Mic,
+                                contentDescription = "Recording available",
+                                tint = Color(0xFF159B63),
+                                modifier = Modifier.size(15.dp)
                             )
-                        }
-                        IconButton(
-                            onClick = {
-                                if (recordingFile == null || !recordingFile.exists()) {
-                                    android.widget.Toast.makeText(context, "Recording file not found", android.widget.Toast.LENGTH_SHORT).show()
-                                } else {
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                "Recording available",
+                                color = Color(0xFF159B63),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            IconButton(
+                                onClick = {
                                     try {
-                                        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", recordingFile)
-                                        val send = Intent(Intent.ACTION_SEND).apply {
-                                            type = "audio/*"
-                                            putExtra(Intent.EXTRA_STREAM, uri)
-                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        val activePlayer = player
+                                        if (activePlayer != null) {
+                                            if (isPlaying) {
+                                                activePlayer.pause()
+                                                isPlaying = false
+                                            } else {
+                                                activePlayer.start()
+                                                isPlaying = true
+                                            }
+                                        } else {
+                                            val file = recordingFile
+                                            if (file == null || !file.isFile) {
+                                                android.widget.Toast.makeText(context, "Recording file is missing", android.widget.Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                val newPlayer = android.media.MediaPlayer()
+                                                newPlayer.setOnCompletionListener {
+                                                    isPlaying = false
+                                                    try { it.release() } catch (_: Exception) {}
+                                                    player = null
+                                                }
+                                                newPlayer.setOnErrorListener { failedPlayer, _, _ ->
+                                                    isPlaying = false
+                                                    try { failedPlayer.release() } catch (_: Exception) {}
+                                                    player = null
+                                                    android.widget.Toast.makeText(context, "Unable to play this recording", android.widget.Toast.LENGTH_SHORT).show()
+                                                    true
+                                                }
+                                                try {
+                                                    newPlayer.setDataSource(file.absolutePath)
+                                                    newPlayer.prepare()
+                                                    newPlayer.start()
+                                                    player = newPlayer
+                                                    isPlaying = true
+                                                } catch (error: Exception) {
+                                                    try { newPlayer.release() } catch (_: Exception) {}
+                                                    throw error
+                                                }
+                                            }
                                         }
-                                        context.startActivity(Intent.createChooser(send, "Share call recording"))
                                     } catch (_: Exception) {
-                                        android.widget.Toast.makeText(context, "Unable to share recording", android.widget.Toast.LENGTH_SHORT).show()
+                                        isPlaying = false
+                                        player = null
+                                        android.widget.Toast.makeText(context, "Unable to play this recording. The audio file may be damaged or unsupported.", android.widget.Toast.LENGTH_LONG).show()
                                     }
-                                }
-                            },
-                            modifier = Modifier.size(30.dp)
-                        ) {
-                            Icon(Icons.Default.Share, contentDescription = "Share recording", tint = Blue, modifier = Modifier.size(18.dp))
+                                },
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Icon(
+                                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause recording" else "Play recording",
+                                    tint = Blue,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    val file = recordingFile
+                                    if (file == null || !file.isFile) {
+                                        android.widget.Toast.makeText(context, "Recording file not found", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        try {
+                                            val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+                                            val send = Intent(Intent.ACTION_SEND).apply {
+                                                type = "audio/*"
+                                                putExtra(Intent.EXTRA_STREAM, uri)
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            context.startActivity(Intent.createChooser(send, "Share call recording"))
+                                        } catch (_: Exception) {
+                                            android.widget.Toast.makeText(context, "Unable to share recording", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Icon(Icons.Default.Share, contentDescription = "Share recording", tint = Blue, modifier = Modifier.size(18.dp))
+                            }
+                            IconButton(
+                                onClick = { showDeleteConfirmation = true },
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Delete recording",
+                                    tint = Color(0xFFD64545),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
-                        IconButton(
-                            onClick = { showDeleteConfirmation = true },
-                            modifier = Modifier.size(30.dp)
+                    } else {
+                        Row(
+                            modifier = Modifier.padding(top = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                Icons.Default.Delete,
-                                contentDescription = "Delete recording",
-                                tint = Color(0xFFD64545),
-                                modifier = Modifier.size(18.dp)
+                                Icons.Default.Warning,
+                                contentDescription = "Recording unavailable",
+                                tint = MutedText,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                "Recording unavailable • File missing",
+                                color = MutedText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
                             )
                         }
-
                     }
                 }
             }
