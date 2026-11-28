@@ -179,14 +179,13 @@ fun HomeScreen(
     var monitorEnabled by remember {
         mutableStateOf(recordingPrefs.getBoolean(CallRecordingService.PREF_MONITOR_ENABLED, false))
     }
+    // Notification permission controls drawer visibility on Android 13+;
+    // it is not a prerequisite for starting a microphone foreground service.
     val requiredRecordingPermissions = remember {
-        buildList {
-            add(Manifest.permission.RECORD_AUDIO)
-            add(Manifest.permission.READ_PHONE_STATE)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
+        listOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.READ_PHONE_STATE
+        )
     }
     val startMonitorAfterPermission = {
         try {
@@ -217,7 +216,7 @@ fun HomeScreen(
         if (allGranted) {
             startMonitorAfterPermission()
         } else {
-            onNotice("Call monitoring needs microphone and phone-state permissions. Notification permission is also required on Android 13 and newer so the status is visible.")
+            onNotice("Call monitoring needs microphone and phone-state permissions. You can allow notifications separately to see the ongoing status in the notification drawer.")
         }
     }
 
