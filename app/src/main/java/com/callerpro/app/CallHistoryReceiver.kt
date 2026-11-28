@@ -87,19 +87,24 @@ class CallHistoryReceiver : BroadcastReceiver() {
         if (files.isEmpty()) return
 
         val database = CallHistoryDatabase.getInstance(context)
-        val alreadyLinked = database.getAllCalls()
+        // Keep this set mutable during the pass: after one file is linked,
+        // it must never be reconsidered for a second nearby call.
+        val linkedFileNames = database.getAllCalls()
             .mapNotNull { it.recordingFileName }
-            .toSet()
+            .toMutableSet()
 
         for (file in files) {
-            if (file.name in alreadyLinked) continue
+            if (!linkedFileNames.add(file.name)) continue
 
             // MediaRecorder finalizes the file when the call ends. Match that
             // timestamp to CallLog.DATE + DURATION, not to the call start time.
-            database.linkRecordingToNearestCall(
+            val linked = database.linkRecordingToNearestCall(
                 recordingEndMillis = file.lastModified(),
                 recordingFileName = file.name
             )
+            if (!linked) {
+                linkedFileNames.remove(file.name)
+            }
         }
     }
 }
