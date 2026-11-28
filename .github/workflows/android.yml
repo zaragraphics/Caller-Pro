@@ -1,10 +1,8 @@
 
 name: Build Caller Pro APK
-# Launcher icon and call-history persistence updates are validated on this branch.
+# APK builds are manual only to avoid repeated GitHub Actions builds.
 
 on:
-  push:
-    branches: [main, batch-1-recording-engine]
   workflow_dispatch:
 
 permissions:

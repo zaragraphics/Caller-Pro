@@ -10,7 +10,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
@@ -29,6 +31,8 @@ class CallRecordingService : Service() {
         const val PREF_MONITOR_ENABLED = "monitor_enabled"
         private const val CHANNEL_ID = "caller_pro_recording"
         private const val NOTIFICATION_ID = 7101
+        private const val AMPLITUDE_CHECK_INTERVAL_MS = 1500L
+        private const val SILENT_SAMPLE_LIMIT = 8
     }
 
     private var recorder: MediaRecorder? = null
@@ -37,6 +41,43 @@ class CallRecordingService : Service() {
     private var phoneListener: PhoneStateListener? = null
     private var callHasConnected = false
     private var recordingStarted = false
+
+    private val amplitudeHandler = Handler(Looper.getMainLooper())
+    private var silentSampleCount = 0
+    private var recordingDetectedAudio = false
+    private var silenceWarningShown = false
+    private var lastRecordingDetectedAudio: Boolean? = null
+
+    private val amplitudeCheck = object : Runnable {
+        override fun run() {
+            val activeRecorder = recorder ?: return
+            val amplitude = try {
+                activeRecorder.maxAmplitude
+            } catch (_: Exception) {
+                0
+            }
+
+            if (amplitude > 0) {
+                recordingDetectedAudio = true
+                silentSampleCount = 0
+            } else {
+                silentSampleCount += 1
+                if (silentSampleCount >= SILENT_SAMPLE_LIMIT && !silenceWarningShown) {
+                    silenceWarningShown = true
+                    getSystemService(NotificationManager::class.java).notify(
+                        NOTIFICATION_ID,
+                        buildNotification(
+                            "No microphone signal • Android may restrict mic access during calls"
+                        )
+                    )
+                }
+            }
+
+            if (recordingStarted) {
+                amplitudeHandler.postDelayed(this, AMPLITUDE_CHECK_INTERVAL_MS)
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -99,9 +140,14 @@ class CallRecordingService : Service() {
                         if (callHasConnected) {
                             stopRecording()
                             callHasConnected = false
+                            val resultMessage = when (lastRecordingDetectedAudio) {
+                                true -> "Recording saved • microphone signal detected"
+                                false -> "Recording saved • no microphone signal detected"
+                                null -> "Monitoring enabled • ready for next call"
+                            }
                             getSystemService(NotificationManager::class.java).notify(
                                 NOTIFICATION_ID,
-                                buildNotification("Monitoring enabled • ready for next call")
+                                buildNotification(resultMessage)
                             )
                         }
                     }
@@ -140,9 +186,16 @@ class CallRecordingService : Service() {
             recorder = candidate
             outputFile = file
             recordingStarted = true
+            silentSampleCount = 0
+            recordingDetectedAudio = false
+            silenceWarningShown = false
+            lastRecordingDetectedAudio = null
+            amplitudeHandler.removeCallbacks(amplitudeCheck)
+            amplitudeHandler.postDelayed(amplitudeCheck, AMPLITUDE_CHECK_INTERVAL_MS)
+
             getSystemService(NotificationManager::class.java).notify(
                 NOTIFICATION_ID,
-                buildNotification("Microphone recording active")
+                buildNotification("Recording active • checking microphone input")
             )
         } catch (_: Exception) {
             try { candidate?.reset() } catch (_: Exception) {}
@@ -150,6 +203,8 @@ class CallRecordingService : Service() {
             recorder = null
             recordingStarted = false
             outputFile = null
+            lastRecordingDetectedAudio = null
+            amplitudeHandler.removeCallbacks(amplitudeCheck)
             file.delete()
             getSystemService(NotificationManager::class.java).notify(
                 NOTIFICATION_ID,
@@ -159,7 +214,11 @@ class CallRecordingService : Service() {
     }
 
     private fun stopRecording() {
+        amplitudeHandler.removeCallbacks(amplitudeCheck)
         val currentRecorder = recorder
+        if (recordingStarted) {
+            lastRecordingDetectedAudio = recordingDetectedAudio
+        }
         try {
             currentRecorder?.stop()
         } catch (_: Exception) {
@@ -239,6 +298,7 @@ class CallRecordingService : Service() {
     }
 
     override fun onDestroy() {
+        amplitudeHandler.removeCallbacks(amplitudeCheck)
         try {
             phoneListener?.let { telephonyManager?.listen(it, PhoneStateListener.LISTEN_NONE) }
         } catch (_: Exception) {
