@@ -1,6 +1,6 @@
 package com.callerpro.app
 
-import android.app.InCallService
+import android.telecom.InCallService
 import android.telecom.Call
 import android.content.Intent
 import android.app.Notification
