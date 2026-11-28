@@ -279,6 +279,12 @@ class CallHistoryDatabase private constructor(
     }
 
     @Synchronized
+    fun unlinkRecording(callId: Long): Boolean {
+        val values = ContentValues().apply { putNull(COL_RECORDING) }
+        return writableDatabase.update(TABLE_CALLS, values, "$COL_ID = ?", arrayOf(callId.toString())) > 0
+    }
+
+    @Synchronized
     fun getCallCount(): Int {
         readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM $TABLE_CALLS",
