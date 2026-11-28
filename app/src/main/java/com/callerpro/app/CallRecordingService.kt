@@ -275,6 +275,8 @@ class CallRecordingService : Service() {
                 }
             }
 
+            // Reset before start(): an immediate asynchronous recorder error must not be cleared.
+            recorderReportedError = false
             candidate.setAudioSource(MediaRecorder.AudioSource.MIC)
             candidate.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             candidate.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
@@ -293,7 +295,6 @@ class CallRecordingService : Service() {
             silenceWarningShown = false
             lastRecordingDetectedAudio = null
             lastRecordingSaved = null
-            recorderReportedError = false
             amplitudeHandler.removeCallbacks(amplitudeCheck)
             amplitudeHandler.postDelayed(amplitudeCheck, AMPLITUDE_CHECK_INTERVAL_MS)
 
