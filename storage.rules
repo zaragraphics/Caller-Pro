@@ -1,0 +1,10 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Recording cloud backup is not implemented yet. Keep all Storage access
+    // denied until a user-consented, per-user backup design is implemented.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
