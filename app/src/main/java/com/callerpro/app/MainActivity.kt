@@ -2049,6 +2049,25 @@ private fun CallHistoryCard(call: CallEntry) {
                                 modifier = Modifier.size(19.dp)
                             )
                         }
+                        IconButton(
+                            onClick = {
+                                try {
+                                    val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", recordingFile)
+                                    val send = Intent(Intent.ACTION_SEND).apply {
+                                        type = "audio/*"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(send, "Share call recording"))
+                                } catch (_: Exception) {
+                                    android.widget.Toast.makeText(context, "Unable to share recording", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = "Share recording", tint = Blue, modifier = Modifier.size(18.dp))
+                        }
+
                     }
                 }
             }
