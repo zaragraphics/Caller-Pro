@@ -15,12 +15,17 @@ import android.view.Gravity
 import android.view.ViewGroup
 
 class InCallActivity : Activity() {
+    private lateinit var callerName: TextView
+    private lateinit var callerNumber: TextView
     private lateinit var status: TextView
+    private lateinit var duration: TextView
+    private lateinit var callSwitcher: LinearLayout
     private lateinit var muteButton: Button
     private lateinit var speakerButton: Button
     private lateinit var holdButton: Button
     private lateinit var dtmfToggleButton: Button
     private lateinit var dtmfPanel: LinearLayout
+    private var lastCallListSignature = ""
     private val handler = Handler(Looper.getMainLooper())
 
     private val refreshTask = object : Runnable {
@@ -36,16 +41,37 @@ class InCallActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(24, 24, 24, 24)
+            setPadding(24, 20, 24, 24)
+        }
+        callerName = TextView(this).apply {
+            textSize = 25f
+            gravity = Gravity.CENTER
+            text = "Caller"
+        }
+        callerNumber = TextView(this).apply {
+            textSize = 17f
+            gravity = Gravity.CENTER
         }
         status = TextView(this).apply {
-            textSize = 22f
+            textSize = 19f
             gravity = Gravity.CENTER
-            setPadding(0, 16, 0, 16)
+            setPadding(0, 12, 0, 8)
         }
-        root.addView(status, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
+        duration = TextView(this).apply {
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 12)
+        }
+        root.addView(callerName)
+        root.addView(callerNumber)
+        root.addView(status)
+        root.addView(duration)
+
+        callSwitcher = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+        }
+        root.addView(callSwitcher)
 
         root.addView(actionButton("Answer") {
             currentCall()?.takeIf { it.state == Call.STATE_RINGING }
@@ -100,8 +126,7 @@ class InCallActivity : Activity() {
             currentCall()?.takeIf { it.state != Call.STATE_DISCONNECTED }?.disconnect()
         })
 
-        val scroll = ScrollView(this).apply { addView(root) }
-        setContentView(scroll)
+        setContentView(ScrollView(this).apply { addView(root) })
         refresh()
     }
 
@@ -158,6 +183,41 @@ class InCallActivity : Activity() {
         refresh()
     }
 
+    private fun updateCallSwitcher() {
+        val calls = CallerProInCallService.instance?.getTrackedCalls().orEmpty()
+        val signature = calls.joinToString("|") {
+            "${System.identityHashCode(it)}:${it.state}:${it.details?.handle}"
+        }
+        if (signature == lastCallListSignature) return
+        lastCallListSignature = signature
+        callSwitcher.removeAllViews()
+
+        if (calls.size > 1) {
+            callSwitcher.addView(TextView(this).apply {
+                text = "Switch call"
+                textSize = 16f
+                gravity = Gravity.CENTER
+            })
+            calls.forEachIndexed { index, call ->
+                val number = call.details?.handle?.schemeSpecificPart ?: "Unknown number"
+                val label = when (call.state) {
+                    Call.STATE_ACTIVE -> "Active"
+                    Call.STATE_HOLDING -> "On hold"
+                    Call.STATE_RINGING -> "Incoming"
+                    Call.STATE_DIALING, Call.STATE_CONNECTING -> "Calling"
+                    else -> "Call"
+                }
+                callSwitcher.addView(Button(this).apply {
+                    text = "${index + 1}. $number — $label"
+                    setOnClickListener {
+                        CallerProInCallService.instance?.selectCall(call)
+                        refresh()
+                    }
+                })
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         handler.removeCallbacks(refreshTask)
@@ -181,6 +241,12 @@ class InCallActivity : Activity() {
 
     private fun refresh() {
         val call = currentCall()
+        val details = call?.details
+        val displayName = details?.callerDisplayName?.toString()?.takeIf { it.isNotBlank() }
+        val number = details?.handle?.schemeSpecificPart?.takeIf { it.isNotBlank() }
+        callerName.text = displayName ?: number ?: "Unknown caller"
+        callerNumber.text = if (displayName != null && number != null) number else ""
+
         status.text = when (call?.state) {
             Call.STATE_RINGING -> "Incoming call"
             Call.STATE_DIALING, Call.STATE_CONNECTING -> "Calling…"
@@ -189,14 +255,17 @@ class InCallActivity : Activity() {
             Call.STATE_DISCONNECTED -> "Call ended"
             else -> "Caller Pro call controls"
         }
+
+        val connectedAt = details?.connectTimeMillis ?: 0L
+        duration.text = if (call?.state == Call.STATE_ACTIVE && connectedAt > 0L) {
+            formatDuration((System.currentTimeMillis() - connectedAt).coerceAtLeast(0L) / 1000L)
+        } else ""
+
         val service = CallerProInCallService.instance
         muteButton.text = if (service?.callAudioState?.isMuted == true) "Unmute" else "Mute"
         speakerButton.text = if (service?.callAudioState?.route == CallAudioState.ROUTE_SPEAKER)
             "Speaker on" else "Speaker"
-        holdButton.text = when (call?.state) {
-            Call.STATE_HOLDING -> "Resume"
-            else -> "Hold"
-        }
+        holdButton.text = if (call?.state == Call.STATE_HOLDING) "Resume" else "Hold"
         val active = call?.state == Call.STATE_ACTIVE
         holdButton.isEnabled = active || call?.state == Call.STATE_HOLDING
         dtmfToggleButton.isEnabled = active
@@ -204,5 +273,14 @@ class InCallActivity : Activity() {
             val row = dtmfPanel.getChildAt(i) as? LinearLayout ?: continue
             for (j in 0 until row.childCount) row.getChildAt(j).isEnabled = active
         }
+        updateCallSwitcher()
+    }
+
+    private fun formatDuration(totalSeconds: Long): String {
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds)
+        else "%02d:%02d".format(minutes, seconds)
     }
 }
