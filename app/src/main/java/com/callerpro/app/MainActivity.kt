@@ -1538,6 +1538,7 @@ fun FamilyScreen(onNotice: (String) -> Unit) {
 }
 
 private data class CallEntry(
+    val id: Long,
     val name: String,
     val number: String,
     val type: Int,
