@@ -12,6 +12,7 @@ import android.util.Log
 
 class CallerProInCallService : InCallService() {
     private val trackedCalls = mutableListOf<Call>()
+    private var preferredCall: Call? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -32,6 +33,7 @@ class CallerProInCallService : InCallService() {
     override fun onCallRemoved(call: Call) {
         call.unregisterCallback(callback)
         trackedCalls.removeAll { it === call }
+        if (preferredCall === call) preferredCall = null
         refreshForegroundCall()
         super.onCallRemoved(call)
     }
@@ -40,14 +42,30 @@ class CallerProInCallService : InCallService() {
         override fun onStateChanged(call: Call, state: Int) {
             refreshForegroundCall()
         }
+
+        override fun onDetailsChanged(call: Call, details: Call.Details) {
+            refreshForegroundCall()
+        }
     }
 
-    /**
-     * Keep a stable foreground call for the UI when Android reports call waiting,
-     * a held call, or a second call. Prefer a connected call, then ringing/dialing.
-     */
+    fun getTrackedCalls(): List<Call> = trackedCalls.filter {
+        it.state != Call.STATE_DISCONNECTED
+    }.toList()
+
+    fun selectCall(call: Call) {
+        if (trackedCalls.any { it === call } && call.state != Call.STATE_DISCONNECTED) {
+            preferredCall = call
+            activeCall = call
+            showCallNotification(call)
+        }
+    }
+
     private fun refreshForegroundCall() {
-        val selected = trackedCalls.firstOrNull { it.state == Call.STATE_ACTIVE }
+        if (preferredCall !in trackedCalls || preferredCall?.state == Call.STATE_DISCONNECTED) {
+            preferredCall = null
+        }
+        val selected = preferredCall
+            ?: trackedCalls.firstOrNull { it.state == Call.STATE_ACTIVE }
             ?: trackedCalls.firstOrNull { it.state == Call.STATE_RINGING }
             ?: trackedCalls.firstOrNull { it.state == Call.STATE_DIALING }
             ?: trackedCalls.firstOrNull { it.state == Call.STATE_CONNECTING }
@@ -87,6 +105,7 @@ class CallerProInCallService : InCallService() {
             this, 10, Intent(this, InCallActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val caller = call.details?.handle?.schemeSpecificPart
         val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
@@ -101,7 +120,7 @@ class CallerProInCallService : InCallService() {
                     else -> "Caller Pro call"
                 }
             )
-            .setContentText("Tap to open call controls")
+            .setContentText(caller ?: "Tap to open call controls")
             .setCategory(Notification.CATEGORY_CALL)
             .setPriority(Notification.PRIORITY_MAX)
             .setOngoing(true)
@@ -114,6 +133,7 @@ class CallerProInCallService : InCallService() {
     override fun onDestroy() {
         trackedCalls.forEach { it.unregisterCallback(callback) }
         trackedCalls.clear()
+        preferredCall = null
         activeCall = null
         if (instance === this) instance = null
         super.onDestroy()
