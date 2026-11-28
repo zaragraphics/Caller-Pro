@@ -107,14 +107,23 @@ service cloud.firestore {
         resource.data.userId == request.auth.uid
         || isGroupAdmin(resource.data.groupId)
       );
-      allow create, update: if signedIn()
+      allow create: if signedIn()
         && request.resource.data.userId == request.auth.uid
         && isGroupMember(request.resource.data.groupId)
         && consentId == request.resource.data.groupId + "_" + request.auth.uid
         && request.resource.data.callDetails is bool
         && request.resource.data.recordingDetails is bool
         && request.resource.data.smsDetails is bool
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["groupId", "userId", "callDetails", "recordingDetails", "smsDetails", "consentVersion", "updatedAt"]);
+        && request.resource.data.keys().hasOnly(["groupId", "userId", "callDetails", "recordingDetails", "smsDetails", "consentVersion", "updatedAt"]);
+      allow update: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.groupId == resource.data.groupId
+        && isGroupMember(resource.data.groupId)
+        && request.resource.data.callDetails is bool
+        && request.resource.data.recordingDetails is bool
+        && request.resource.data.smsDetails is bool
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["callDetails", "recordingDetails", "smsDetails", "consentVersion", "updatedAt"]);
       allow delete: if false;
     }
 
