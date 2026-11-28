@@ -44,6 +44,14 @@ class CallRecordingService : Service() {
     private val legacyTelephonyListeners = mutableMapOf<Int, Pair<TelephonyManager, PhoneStateListener>>()
     private val telephonyCallbacks = mutableMapOf<Int, Pair<TelephonyManager, TelephonyCallback>>()
     private val activeSubscriptionCalls = mutableSetOf<Int>()
+    private var subscriptionManager: SubscriptionManager? = null
+    private var subscriptionsListenerRegistered = false
+    private val subscriptionsChangedListener =
+        object : SubscriptionManager.OnSubscriptionsChangedListener() {
+            override fun onSubscriptionsChanged() {
+                refreshCallStateListeners()
+            }
+        }
     private var recordingStarted = false
     private var lastRecordingSaved: Boolean? = null
     @Volatile private var recorderReportedError = false
@@ -142,38 +150,57 @@ class CallRecordingService : Service() {
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 
     private fun registerCallStateListener() {
+        subscriptionManager = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
+        refreshCallStateListeners()
+
+        try {
+            subscriptionManager?.addOnSubscriptionsChangedListener(subscriptionsChangedListener)
+            subscriptionsListenerRegistered = true
+        } catch (_: Exception) {
+            // Initial SIM monitoring remains available even if hot-swap notifications are unavailable.
+        }
+    }
+
+    private fun refreshCallStateListeners() {
         val defaultManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-        val subscriptionManager = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
+        val manager = subscriptionManager
+            ?: (getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager)
 
         val subscriptionIds = try {
-            subscriptionManager.activeSubscriptionInfoList
+            manager.activeSubscriptionInfoList
                 ?.map { it.subscriptionId }
                 ?.distinct()
                 .orEmpty()
         } catch (_: SecurityException) {
             emptyList()
+        } catch (_: Exception) {
+            emptyList()
         }
 
-        // Keep one registration per active SIM so dual-SIM calls are tracked independently.
         val targets = if (subscriptionIds.isNotEmpty()) {
-            subscriptionIds.map { it to defaultManager.createForSubscriptionId(it) }
+            subscriptionIds.associateWith { defaultManager.createForSubscriptionId(it) }
         } else {
-            listOf(SubscriptionManager.INVALID_SUBSCRIPTION_ID to defaultManager)
+            mapOf(SubscriptionManager.INVALID_SUBSCRIPTION_ID to defaultManager)
         }
 
-        var failedSubscriptionCount = 0
+        val registeredIds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            telephonyCallbacks.keys.toSet()
+        } else {
+            legacyTelephonyListeners.keys.toSet()
+        }
 
-        for ((subscriptionId, manager) in targets) {
+        // Add listeners for newly active SIM subscriptions without disturbing existing calls.
+        for ((subscriptionId, telephonyManager) in targets) {
+            if (subscriptionId in registeredIds) continue
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val callback = object : TelephonyCallback(),
-                        TelephonyCallback.CallStateListener {
+                    val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
                         override fun onCallStateChanged(state: Int) {
                             handleCallStateChanged(subscriptionId, state)
                         }
                     }
-                    telephonyCallbacks[subscriptionId] = manager to callback
-                    manager.registerTelephonyCallback(mainExecutor, callback)
+                    telephonyManager.registerTelephonyCallback(mainExecutor, callback)
+                    telephonyCallbacks[subscriptionId] = telephonyManager to callback
                 } else {
                     @Suppress("DEPRECATION")
                     val listener = object : PhoneStateListener() {
@@ -182,29 +209,51 @@ class CallRecordingService : Service() {
                             handleCallStateChanged(subscriptionId, state)
                         }
                     }
-                    legacyTelephonyListeners[subscriptionId] = manager to listener
                     @Suppress("DEPRECATION")
-                    manager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
+                    telephonyManager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
+                    legacyTelephonyListeners[subscriptionId] = telephonyManager to listener
                 }
             } catch (_: Exception) {
-                legacyTelephonyListeners.remove(subscriptionId)
-                telephonyCallbacks.remove(subscriptionId)
-                failedSubscriptionCount++
+                getSystemService(NotificationManager::class.java).notify(
+                    NOTIFICATION_ID,
+                    buildNotification("Monitoring limited • unable to monitor one SIM subscription")
+                )
+            }
+        }
+
+        // Removed SIM listeners are retained while their call is marked active, so an
+        // in-progress shared recording is not stopped merely because a SIM was removed.
+        val currentIds = targets.keys
+        val staleIds = registeredIds.filter { it !in currentIds && it !in activeSubscriptionCalls }
+        for (subscriptionId in staleIds) {
+            legacyTelephonyListeners.remove(subscriptionId)?.let { (telephonyManager, listener) ->
+                try {
+                    @Suppress("DEPRECATION")
+                    telephonyManager.listen(listener, PhoneStateListener.LISTEN_NONE)
+                } catch (_: Exception) {}
+            }
+            telephonyCallbacks.remove(subscriptionId)?.let { (telephonyManager, callback) ->
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        telephonyManager.unregisterTelephonyCallback(callback)
+                    }
+                } catch (_: Exception) {}
             }
         }
 
         if (legacyTelephonyListeners.isEmpty() && telephonyCallbacks.isEmpty()) {
             throw IllegalStateException("Unable to register call-state listeners")
         }
+    }
 
-        if (failedSubscriptionCount > 0) {
-            getSystemService(NotificationManager::class.java).notify(
-                NOTIFICATION_ID,
-                buildNotification(
-                    "Monitoring limited • unable to monitor $failedSubscriptionCount SIM subscription(s)"
-                )
-            )
+    private fun unregisterSubscriptionsChangedListener() {
+        if (!subscriptionsListenerRegistered) return
+        try {
+            subscriptionManager?.removeOnSubscriptionsChangedListener(subscriptionsChangedListener)
+        } catch (_: Exception) {
         }
+        subscriptionsListenerRegistered = false
+        subscriptionManager = null
     }
 
     private fun handleCallStateChanged(subscriptionId: Int, state: Int) {
@@ -216,6 +265,8 @@ class CallRecordingService : Service() {
             TelephonyManager.CALL_STATE_IDLE -> {
                 activeSubscriptionCalls.remove(subscriptionId)
                 // Keep the shared recorder alive until every monitored SIM is idle.
+                // A removed SIM may have been retained until its call returned to IDLE.
+                refreshCallStateListeners()
                 if (activeSubscriptionCalls.isEmpty() && recordingStarted) {
                     stopRecording()
                     val resultMessage = when {
@@ -361,6 +412,7 @@ class CallRecordingService : Service() {
     }
 
     private fun unregisterCallStateListeners() {
+        unregisterSubscriptionsChangedListener()
         legacyTelephonyListeners.values.forEach { (manager, listener) ->
             try {
                 @Suppress("DEPRECATION")
