@@ -413,7 +413,7 @@ fun HomeScreen(
                         icon = Icons.Default.Mic,
                         modifier = Modifier.weight(1f)
                     ) {
-                        onNotice("Recording library will be connected in the next development step.")
+                        context.startActivity(Intent(context, RecordingLibraryActivity::class.java))
                     }
                 }
 
